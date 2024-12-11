@@ -53,7 +53,7 @@ class CheckerNode:
         self.confirm_keywords = confirm_keywords
         
 
-    def invoke(self, state: ChatbotState) -> str:
+    def invoke(self, state: ChatbotState) -> dict:
         """
         Checks whether the input is a valid request for pizza order
         """
@@ -132,7 +132,7 @@ class OrderNode:
     def __init__(self):
         pass
 
-    def invoke(self, state: ChatbotState) -> str:
+    def invoke(self, state: ChatbotState) -> dict:
         """
         Returns fallback message
         """
@@ -194,7 +194,7 @@ class RetrievalNode:
     def __init__(self):
         pass
 
-    def invoke(self, state: ChatbotState) -> str:
+    def invoke(self, state: ChatbotState) -> dict:
         """
         Extracts the information from user input
         """
