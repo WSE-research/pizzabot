@@ -10,7 +10,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+load_dotenv(override=True)
+pizza_api_base = environ.get('PIZZA_API_BASE')
 openai_api_key = environ.get('OPENAI_API_KEY')
 openai_api_base = environ.get('OPENAI_API_BASE')
 
@@ -46,7 +47,7 @@ Below is a text for you to analyze."""},
     house_number = [k for (k , v) in response_dictionary.items() if v == "HOUSE_NUMBER"][0]
 
     payload = {"city": city, "street": street, "house_number": house_number}
-    response = requests.post("https://demos.swe.htwk-leipzig.de/pizza-api/address/validate", json=payload, timeout=1) 
+    response = requests.post(f"{pizza_api_base}/address/validate", json=payload, timeout=5) 
 
     if response.status_code != 200:
         return None
@@ -55,12 +56,16 @@ Below is a text for you to analyze."""},
     return (city, street, house_number)
 
 
-def validate_pizza_name(input):
+def get_pizza_menu():
+    response = requests.get(f"{pizza_api_base}/pizza", timeout=5)
+    return ", ".join([item["name"] for item in response.json()])
+
+def validate_pizza_name(_input):
     threshold = 80
-    response = requests.get("https://demos.swe.htwk-leipzig.de/pizza-api/pizza", timeout=1)
+    response = requests.get(f"{pizza_api_base}/pizza", timeout=5)
     menu = response.json()
     for item in menu:
-        current_ratio = fuzz.partial_ratio(input, list(item.values())[1])
+        current_ratio = fuzz.partial_ratio(_input, list(item.values())[1])
         if(current_ratio >= threshold):
             #print("debugging: " + str(list(item.values())[1]) + " was determined type")
             return str(list(item.values())[0])
@@ -69,7 +74,7 @@ def validate_pizza_name(input):
 def post_order(pizza_id, address):
     city, street, house_number = address
     post = {"pizza_id": pizza_id, "city": city, "street": street, "house_number": house_number}
-    response = requests.post("https://demos.swe.htwk-leipzig.de/pizza-api/order", json=post, timeout=1)
+    response = requests.post(f"{pizza_api_base}/order", json=post, timeout=5)
 
     if response.status_code != 200:
         return None
@@ -85,7 +90,7 @@ def post_order(pizza_id, address):
 
     
 def get_order(order_id):
-    response = requests.get("https://demos.swe.htwk-leipzig.de/pizza-api/address/validate/" + order_id, timeout=1)
+    response = requests.get(f"{pizza_api_base}/address/validate/" + order_id, timeout=5)
     order = response.json()
     #TODO return order information if asked
 

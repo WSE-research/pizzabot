@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from utils import post_order, validate_pizza_name, check_customer_address, BasicFunctions
+from utils import post_order, validate_pizza_name, check_customer_address, BasicFunctions, get_pizza_menu
 
 from langgraph.graph import END, StateGraph
 from langchain_core.messages import (
@@ -25,6 +25,7 @@ class ChatbotState(TypedDict):
     messages: list
     active_order: bool
     confirm_order: bool
+    current_intent: str
     invalid: bool
     ended: bool
     pizza_id: str
@@ -36,6 +37,7 @@ class Nodes(Enum):
     CHECKER = "checker"
     ORDER_FORM = "order_form"
     RETRIEVAL = "retrieval"
+    DESCRIPTION = "description"
     END = "end"
 
 class OrderSlots(Enum):
@@ -43,14 +45,19 @@ class OrderSlots(Enum):
     CUSTOMER_ADDRESS = "customer_address"
     ORDER_ID = "order_id"
 
+class Intents(Enum):
+    DEFAULT = "default"
+    DESCRIPTION = "description"
+
 class CheckerNode:
     """
     This node checks whether user input is valid
     """
     
-    def __init__(self, order_keywords: list = ["order"], confirm_keywords: list = ["yes", "Yes"]):
+    def __init__(self, order_keywords: list = ["order"], confirm_keywords: list = ["yes", "Yes"], description_keywords: list = ["tell me more", "describe"]):
         self.order_keywords = order_keywords
         self.confirm_keywords = confirm_keywords
+        self.description_keywords = description_keywords
         
 
     def invoke(self, state: ChatbotState) -> dict:
@@ -58,6 +65,13 @@ class CheckerNode:
         Checks whether the input is a valid request for pizza order
         """
         _input = state[INPUT]
+
+        if any(keyword.lower() in _input.lower() for keyword in self.description_keywords):
+            state["current_intent"] = Intents.DESCRIPTION.value
+            return {
+                MESSAGES: state[MESSAGES],
+                "current_intent": state["current_intent"]
+            }
         
         if state['confirm_order']:
             if not any(keyword in _input for keyword in self.confirm_keywords):
@@ -119,10 +133,33 @@ class CheckerNode:
         """
         Routes to the next node
         """
-        if state['active_order']:
+        if state['active_order'] and "current_intent" not in state or not state["current_intent"] == Intents.DESCRIPTION.value:
             return Nodes.RETRIEVAL.value
+        elif state["current_intent"] == Intents.DESCRIPTION.value:
+            return Nodes.DESCRIPTION.value
         else:
             return END
+
+class DescriptionNode:
+    """
+    This node provides a description of the pizza
+    """
+    
+    def __init__(self):
+        pass
+
+    def invoke(self, state: ChatbotState) -> dict:
+        """
+        Returns a description of the pizza
+        """
+        _input = state[INPUT] # user message
+        # TODO: call external API to get pizza description
+        state["messages"].append(AIMessage(content="""The pizza is a delicious dish that consists of a round, flat base of dough topped with tomato sauce, cheese, and various toppings."""))
+        # TODO: would you like to order this pizza?
+        return {
+            MESSAGES: state[MESSAGES],
+            "current_intent": Intents.DEFAULT.value,
+        }
 
 class OrderNode:
     """
@@ -173,7 +210,8 @@ class OrderNode:
                 } 
 
         if next_slot == OrderSlots.PIZZA_NAME.value:
-            state['messages'].append(AIMessage("What pizza would you like to order?"))
+            menu = get_pizza_menu()
+            state['messages'].append(AIMessage("What pizza would you like to order?\nOr should I describe the pizza for you? Here are the options: " + menu))
             state[MESSAGES].append(FunctionMessage(content=OrderSlots.PIZZA_NAME, name=OrderSlots.PIZZA_NAME.value))
             return {
                 MESSAGES: state[MESSAGES]
@@ -232,6 +270,7 @@ if __name__ == "__main__":
     order_node = OrderNode()
     checker_node = CheckerNode()
     retrieval_node = RetrievalNode()
+    description_node = DescriptionNode()
 
     workflow = StateGraph(ChatbotState)
     #TODO set entrypoint as language detection-node
@@ -240,16 +279,19 @@ if __name__ == "__main__":
     workflow.add_node(Nodes.CHECKER.value, checker_node.invoke)
     workflow.add_node(Nodes.RETRIEVAL.value, retrieval_node.invoke)
     workflow.add_node(Nodes.ORDER_FORM.value, order_node.invoke)
+    workflow.add_node(Nodes.DESCRIPTION.value, description_node.invoke)
 
     workflow.add_conditional_edges(
         Nodes.CHECKER.value,
         checker_node.route,
         {
             Nodes.RETRIEVAL.value: Nodes.RETRIEVAL.value,
+            Nodes.DESCRIPTION.value: Nodes.DESCRIPTION.value,
             END: END,
         }
     )
     workflow.add_edge(Nodes.RETRIEVAL.value, Nodes.ORDER_FORM.value)
+    workflow.add_edge(Nodes.DESCRIPTION.value, END)
     workflow.add_edge(Nodes.ORDER_FORM.value, END)
     
     workflow.set_entry_point(Nodes.CHECKER.value)
@@ -258,7 +300,18 @@ if __name__ == "__main__":
     # START DIALOGUE: first message
     print("-- Chatbot: ", "Hi! I am a pizza bot. I can help you order a pizza. What would you like to order?")
     user_input = input("-> Your response: ")
-    outputs = graph.invoke({INPUT: user_input, SLOTS: {}, MESSAGES: [], "active_order": False, "confirm_order":False, "pizza_id":None, "customer_address":None, "invalid":False, "ended": False})
+    outputs = graph.invoke({
+        INPUT: user_input,
+        SLOTS: {},
+        MESSAGES: [],
+        "active_order": False,
+        "confirm_order": False,
+        "pizza_id": None,
+        "current_intent": Intents.DEFAULT.value,
+        "customer_address": None,
+        "invalid": False,
+        "ended": False
+    })
 
     while True:
         print("-- Chatbot: ", [m.content for m in outputs[MESSAGES] if isinstance(m, AIMessage) ][-1]) # print chatbot response
