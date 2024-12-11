@@ -88,3 +88,14 @@ def get_order(order_id):
     response = requests.get("https://demos.swe.htwk-leipzig.de/pizza-api/address/validate/" + order_id, timeout=1)
     order = response.json()
     #TODO return order information if asked
+
+class BasicFunctions:
+    def get_last_missing_slots(state, required_slots):
+        return [slot.value for slot in required_slots if slot.value not in state['slots'].keys()]
+    
+    def get_last_function_message(outputs):
+        from langchain_core.messages import FunctionMessage
+        return [m for m in outputs["messages"] if isinstance(m, FunctionMessage) ][-1]
+    
+    def get_last_message_or_no_message(state):
+        return state["messages"][-1] if len(state["messages"]) > 0 else "No message"
