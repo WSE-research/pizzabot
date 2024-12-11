@@ -20,7 +20,33 @@ client = OpenAI(
     base_url=openai_api_base,
 )
 
-def check_customer_address(input):    
+def check_order_intention(_input):
+    example_string_1 = "I wanna order a pizza."
+    assistant_docstring_1 = """{"intention": True}"""
+
+    example_string_2 = "How are you doing today?"
+    assistant_docstring_2 = """{"intention": False}"""
+
+    chat_response = client.chat.completions.create(
+        model=environ.get("MODEL_NAME"),
+        messages=[
+            {"role": "system", "content": """You are an Input Validation Tools.
+Recognize whether the user wants to order a pizza or he/she has another intention and output the structured data as a JSON. **Output ONLY the structured data.**
+Below is a text for you to analyze."""},
+            {"role": "user", "content": example_string_1},
+            {"role": "assistant", "content": assistant_docstring_1},
+            {"role": "user", "content": example_string_2},
+            {"role": "assistant", "content": assistant_docstring_2},
+            {"role": "user", "content": _input}
+        ]
+    )
+    
+    received_message = chat_response.choices[0].message.content
+    logger.info(received_message)
+    return eval(received_message)["intention"]
+
+
+def check_customer_address(_input):    
     example_string = "My address is Gustav-Freytag Straße 12A in Leipzig."
     assistant_docstring = """[{"Leipzig": "CITY"}, {"Gustav-Freytag Straße": "STREET"}, {"12A": "HOUSE_NUMBER"}]"""
     chat_response = client.chat.completions.create(
@@ -31,7 +57,7 @@ Recognize named entities and output the structured data as a JSON. **Output ONLY
 Below is a text for you to analyze."""},
             {"role": "user", "content": example_string},
             {"role": "assistant", "content": assistant_docstring},
-            {"role": "user", "content": input}
+            {"role": "user", "content": _input}
         ]
     )
     

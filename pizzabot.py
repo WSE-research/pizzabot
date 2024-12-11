@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from utils import post_order, validate_pizza_name, check_customer_address, BasicFunctions, get_pizza_menu
+from utils import post_order, validate_pizza_name, check_customer_address, BasicFunctions, get_pizza_menu, check_order_intention
 
 from langgraph.graph import END, StateGraph
 from langchain_core.messages import (
@@ -116,8 +116,8 @@ class CheckerNode:
                         "invalid": state["invalid"]
                     }
         
-        if not all(keyword in _input for keyword in self.order_keywords):
-            state['messages'].append(AIMessage(content="Invalid order. Please specify a pizza order. Try writing 'I want to order a pizza'."))
+        if not check_order_intention(_input): # User wants to order a pizza
+            state['messages'].append(AIMessage(content="Invalid order. Please specify a pizza order. Try writing e.g. 'I want to order a pizza'."))
             return {
                 MESSAGES: state[MESSAGES]
             }
@@ -133,7 +133,7 @@ class CheckerNode:
         """
         Routes to the next node
         """
-        if state['active_order'] and "current_intent" not in state or not state["current_intent"] == Intents.DESCRIPTION.value:
+        if state['active_order'] and ("current_intent" not in state or not state["current_intent"] == Intents.DESCRIPTION.value):
             return Nodes.RETRIEVAL.value
         elif state["current_intent"] == Intents.DESCRIPTION.value:
             return Nodes.DESCRIPTION.value
