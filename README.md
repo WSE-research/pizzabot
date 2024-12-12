@@ -39,3 +39,23 @@ source pizzabot_env/bin/activate # activates the venv
 python -m pip install -r requirements.txt # now you can use python without "3" when the venv activated
 python pizzabot.py # run the application
 ```
+
+## Example 
+
+Given the current implementation the following interaction should be supported:
+
+```
+-- Chatbot:  Hi! I am a pizza bot. I can help you order a pizza. What would you like to order?
+-> Your response: I want a pizza
+-- Chatbot:  What pizza would you like to order?
+Or should I describe the pizza for you? Here are the options: Margherita, Pepperoni, Hawaiian, Quattro Formaggi
+-> Your response: Tell me more about Hawaiian
+-- Chatbot:  Hawaiian pizza is a variety of pizza usually topped with pineapple pieces and ham.
+-> Your response: Thanks
+-- Chatbot:  What pizza would you like to order?
+Or should I describe the pizza for you? Here are the options: Margherita, Pepperoni, Hawaiian, Quattro Formaggi
+-> Your response: Hawaiian
+-- Chatbot:  What is your delivery address?
+-> Your response: Maksim Gorki Str 58, Leipzig
+-- Chatbot:  Thank you for providing all the details. Your order is being processed! Keep your order id ready incase you have further inquiries: f74cbffd-cec6-4f0f-9249-73b0eb0a4232 .
+```
