@@ -10,7 +10,7 @@ The Pizza Bot's dialogue graph is presented below:
 
 ### How to run
 
-1. Run `python pizzabot.py` within the `python_examples/`
+1. Run `python pizzabot.py`
 2. Follow the dialogue in your console
 
 #### `.env` file
@@ -29,5 +29,13 @@ Pizza API: https://demos.swe.htwk-leipzig.de/pizza-api/docs
 ## Requirements
 
 Make sure you have:
+
 * Python 3.9 or higher
 * Installed the libs from `requirements.txt`
+
+```sh
+python3 -m venv pizzabot_env # may be required to install apt install python3.10-venv
+source pizzabot_env/bin/activate # activates the venv
+python -m pip install -r requirements.txt # now you can use python without "3" when the venv activated
+python pizzabot.py # run the application
+```
