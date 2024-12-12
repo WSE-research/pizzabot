@@ -1,0 +1,15 @@
+digraph G {
+  node [shape=rect, color="blue"];
+  
+  start[label="__start__", color="lightblue"]
+  start -> description [style=dotted]
+  start -> end [style=dotted]
+  
+  description -> checker
+  checker -> retrieval;
+  retrieval -> order_form;
+  order_form -> end
+
+  start [shape=rect, style=rounded ];
+  end [label="__end__", shape=rect, style=rounded, color="darkblue"];
+}
