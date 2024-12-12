@@ -28,7 +28,7 @@ Here is the context with pizza descriptions: {context}
 
 Here is the user message: {_input}
 """
-    
+
     chat_response = client.chat.completions.create(
         model=environ.get("MODEL_NAME"),
         messages=[
@@ -38,10 +38,11 @@ Given the context that has multiple pizza descriptions and the user's question g
             {"role": "user", "content": final_prompt}
         ]
     )
-    
+
     received_message = chat_response.choices[0].message.content
 
     return received_message
+
 
 def execute(query: str, endpoint_url: str = 'https://query.wikidata.org/bigdata/namespace/wdq/sparql'):
     """
@@ -58,7 +59,7 @@ def execute(query: str, endpoint_url: str = 'https://query.wikidata.org/bigdata/
         logger.error(str(e))
         if 'MalformedQueryException' in e or 'bad formed' in e:
             return {'error': str(e)}
-        return  {'error': str(e)}
+        return {'error': str(e)}
 
 
 def fetch_pizza_descriptions_from_wikidata() -> dict:
@@ -72,14 +73,15 @@ PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 SELECT * WHERE {
     ?pizza wdt:P31 wd:Q116392487 . # get all entities URIs that are an instance of the pizza type 
     ?pizza rdfs:label ?label .  # get the names of the pizza
-    FILTER (lang(?label) = 'en')  # fitler for English pizza names only
+    FILTER (lang(?label) = 'en')  # filter for English pizza names only
     ?pizza schema:description ?description # get the descriptions of the pizza
-    FILTER (lang(?description) = 'en')  # fitler for English pizza description only
+    FILTER (lang(?description) = 'en')  # filter for English pizza description only
 }
 ORDER BY ?label # sort by name
 """
     result = execute(sparql_query)
     return result
+
 
 def check_order_intention(_input):
     example_string_1 = "I wanna order a pizza."
@@ -101,13 +103,13 @@ Below is a text for you to analyze."""},
             {"role": "user", "content": _input}
         ]
     )
-    
+
     received_message = chat_response.choices[0].message.content
     logger.info(received_message)
     return eval(received_message)["intention"]
 
 
-def check_customer_address(_input):    
+def check_customer_address(_input):
     example_string = "My address is Gustav-Freytag Straße 12A in Leipzig."
     assistant_docstring = """[{"Leipzig": "CITY"}, {"Gustav-Freytag Straße": "STREET"}, {"12A": "HOUSE_NUMBER"}]"""
     chat_response = client.chat.completions.create(
@@ -121,25 +123,28 @@ Below is a text for you to analyze."""},
             {"role": "user", "content": _input}
         ]
     )
-    
+
     received_message = chat_response.choices[0].message.content
     logger.info(received_message)
-    
+
     response_dictionary = {}
     for d in json.loads(received_message):
         response_dictionary.update(d)
-        
-    city = [k for(k , v) in response_dictionary.items() if v == "CITY"][0]
-    street = [k for (k , v) in response_dictionary.items() if v == "STREET"][0]
-    house_number = [k for (k , v) in response_dictionary.items() if v == "HOUSE_NUMBER"][0]
+
+    city = [k for (k, v) in response_dictionary.items() if v == "CITY"][0]
+    street = [k for (k, v) in response_dictionary.items() if v == "STREET"][0]
+    house_number = [
+        k for (k, v) in response_dictionary.items() if v == "HOUSE_NUMBER"][0]
 
     payload = {"city": city, "street": street, "house_number": house_number}
-    response = requests.post(f"{pizza_api_base}/address/validate", json=payload, timeout=5) 
+    response = requests.post(
+        f"{pizza_api_base}/address/validate", json=payload, timeout=5)
 
     if response.status_code != 200:
         return None
 
-    logger.info("Potential Address found: " + str((city, street, house_number)))
+    logger.info("Potential Address found: " +
+                str((city, street, house_number)))
     return (city, street, house_number)
 
 
@@ -147,47 +152,51 @@ def get_pizza_menu():
     response = requests.get(f"{pizza_api_base}/pizza", timeout=5)
     return ", ".join([item["name"] for item in response.json()])
 
+
 def validate_pizza_name(_input):
     threshold = 80
     response = requests.get(f"{pizza_api_base}/pizza", timeout=5)
     menu = response.json()
     for item in menu:
         current_ratio = fuzz.partial_ratio(_input, list(item.values())[1])
-        if(current_ratio >= threshold):
-            #print("debugging: " + str(list(item.values())[1]) + " was determined type")
+        if (current_ratio >= threshold):
+            # print("debugging: " + str(list(item.values())[1]) + " was determined type")
             return str(list(item.values())[0])
     return None
 
+
 def post_order(pizza_id, address):
     city, street, house_number = address
-    post = {"pizza_id": pizza_id, "city": city, "street": street, "house_number": house_number}
+    post = {"pizza_id": pizza_id, "city": city,
+            "street": street, "house_number": house_number}
     response = requests.post(f"{pizza_api_base}/order", json=post, timeout=5)
 
     if response.status_code != 200:
         return None
-    
+
     order_id = response.json()["order_id"]
     status = response.json()["status"]
 
     if status != "received":
         return None
-    
-    return order_id
-    
 
-    
+    return order_id
+
+
 def get_order(order_id):
-    response = requests.get(f"{pizza_api_base}/address/validate/" + order_id, timeout=5)
+    response = requests.get(
+        f"{pizza_api_base}/address/validate/" + order_id, timeout=5)
     order = response.json()
-    #TODO return order information if asked
+    # TODO return order information if asked
+
 
 class BasicFunctions:
     def get_last_missing_slots(state, required_slots):
         return [slot.value for slot in required_slots if slot.value not in state['slots'].keys()]
-    
+
     def get_last_function_message(outputs):
         from langchain_core.messages import FunctionMessage
-        return [m for m in outputs["messages"] if isinstance(m, FunctionMessage) ][-1]
-    
+        return [m for m in outputs["messages"] if isinstance(m, FunctionMessage)][-1]
+
     def get_last_message_or_no_message(state):
         return state["messages"][-1] if len(state["messages"]) > 0 else "No message"

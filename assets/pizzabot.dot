@@ -2,11 +2,13 @@ digraph G {
   node [shape=rect, color="blue"];
   
   start[label="__start__", color="lightblue"]
-  start -> description [style=dotted]
+  start -> checker [style=dotted]
   start -> end [style=dotted]
   
-  description -> checker
   checker -> retrieval;
+  retrieval -> description;
+  description -> description;
+  description -> order_form;
   retrieval -> order_form;
   order_form -> end
 
