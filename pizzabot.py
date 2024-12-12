@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from utils import post_order, validate_pizza_name, check_customer_address, BasicFunctions, get_pizza_menu, check_order_intention
+from utils import post_order, validate_pizza_name, check_customer_address, BasicFunctions, get_pizza_menu, check_order_intention, generate_pizza_description, fetch_pizza_descriptions_from_wikidata
 
 from langgraph.graph import END, StateGraph
 from langchain_core.messages import (
@@ -153,9 +153,10 @@ class DescriptionNode:
         Returns a description of the pizza
         """
         _input = state[INPUT] # user message
-        # TODO: call external API to get pizza description
-        state["messages"].append(AIMessage(content="""The pizza is a delicious dish that consists of a round, flat base of dough topped with tomato sauce, cheese, and various toppings."""))
-        # TODO: would you like to order this pizza?
+        context = fetch_pizza_descriptions_from_wikidata() # fetching the context from wikidata
+        description = generate_pizza_description(_input, str(context)) # generating the description with LLM
+        state["messages"].append(AIMessage(content=description))
+
         return {
             MESSAGES: state[MESSAGES],
             "current_intent": Intents.DEFAULT.value,

@@ -4,6 +4,7 @@ from os import environ
 from openai import OpenAI
 from dotenv import load_dotenv
 from fuzzywuzzy import fuzz
+from SPARQLWrapper import SPARQLWrapper, JSON
 import logging
 
 
@@ -19,6 +20,66 @@ client = OpenAI(
     api_key=openai_api_key,
     base_url=openai_api_base,
 )
+
+
+def generate_pizza_description(_input, context) -> str:
+    final_prompt = f"""
+Here is the context with pizza descriptions: {context}
+
+Here is the user message: {_input}
+"""
+    
+    chat_response = client.chat.completions.create(
+        model=environ.get("MODEL_NAME"),
+        messages=[
+            {"role": "system", "content": """You are a Pizza Salesman.
+Given the context that has multiple pizza descriptions and the user's question generate a pizza description.
+**Output only the description**"""},
+            {"role": "user", "content": final_prompt}
+        ]
+    )
+    
+    received_message = chat_response.choices[0].message.content
+
+    return received_message
+
+def execute(query: str, endpoint_url: str = 'https://query.wikidata.org/bigdata/namespace/wdq/sparql'):
+    """
+    https://query.wikidata.org/bigdata/namespace/wdq/sparql
+    """
+    try:
+        sparql = SPARQLWrapper(endpoint_url)
+        sparql.timeout = 20
+        sparql.setQuery(query)
+        sparql.setReturnFormat(JSON)
+        response = sparql.query().convert()
+        return response
+    except Exception as e:
+        logger.error(str(e))
+        if 'MalformedQueryException' in e or 'bad formed' in e:
+            return {'error': str(e)}
+        return  {'error': str(e)}
+
+
+def fetch_pizza_descriptions_from_wikidata() -> dict:
+    # note, this is a static SPARQL query that returns descriptions for all available pizzas
+    sparql_query = """
+PREFIX schema: <http://schema.org/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT * WHERE {
+    ?pizza wdt:P31 wd:Q116392487 . # get all entities URIs that are an instance of the pizza type 
+    ?pizza rdfs:label ?label .  # get the names of the pizza
+    FILTER (lang(?label) = 'en')  # fitler for English pizza names only
+    ?pizza schema:description ?description # get the descriptions of the pizza
+    FILTER (lang(?description) = 'en')  # fitler for English pizza description only
+}
+ORDER BY ?label # sort by name
+"""
+    result = execute(sparql_query)
+    return result
 
 def check_order_intention(_input):
     example_string_1 = "I wanna order a pizza."
