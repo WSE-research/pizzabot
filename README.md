@@ -50,7 +50,7 @@ Given the current implementation the following interaction should be supported:
 -> Your response: I want a pizza
 -- Chatbot:  What pizza would you like to order?
 Or should I describe the pizza for you? Here are the options: Margherita, Pepperoni, Hawaiian, Quattro Formaggi
--> Your response: Tell me more about Hawaiian
+-> Your response: Tell me more about Hawaiian pizza
 -- Chatbot:  Hawaiian pizza is a variety of pizza usually topped with pineapple pieces and ham.
 -> Your response: Thanks
 -- Chatbot:  What pizza would you like to order?
