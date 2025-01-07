@@ -20,6 +20,7 @@ OPENAI_API_KEY=SECRET
 MODEL_NAME=CHECK THE AVAILABLE AT http://gpu01.imn.htwk-leipzig.de:8081/v1/models
 OPENAI_API_BASE=http://gpu01.imn.htwk-leipzig.de:8081/v1
 PIZZA_API_BASE=https://demos.swe.htwk-leipzig.de/pizza-api
+QANARY_API_BASE=http://demos.swe.htwk-leipzig.de:40111
 ```
 
 ## External Tools

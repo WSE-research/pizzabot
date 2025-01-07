@@ -15,6 +15,7 @@ load_dotenv(override=True)
 pizza_api_base = environ.get('PIZZA_API_BASE')
 openai_api_key = environ.get('OPENAI_API_KEY')
 openai_api_base = environ.get('OPENAI_API_BASE')
+qanary_api_base = environ.get('QANARY_API_BASE')
 
 client = OpenAI(
     api_key=openai_api_key,
@@ -57,10 +58,60 @@ def execute(query: str, endpoint_url: str = 'https://query.wikidata.org/bigdata/
         return response
     except Exception as e:
         logger.error(str(e))
-        if 'MalformedQueryException' in e or 'bad formed' in e:
+        if 'MalformedQueryException' in str(e) or 'bad formed' in str(e):
             return {'error': str(e)}
         return {'error': str(e)}
 
+
+def call_qanary_pipeline(question: str):
+    """
+    Call Qanary pipeline to get the answer for the given question
+    """
+    try:
+        url = f'{qanary_api_base}/startquestionansweringwithtextquestion'
+
+        headers = {
+            'Origin': qanary_api_base,
+            'Referer': url
+        }
+
+        data = {
+            'question': question,
+            'componentfilterinput': '',
+            'componentlist[]': ['Wikidata_Lookup_NEL_component', 'Wikidata_Query_Builder_component', 'QE-Python-SPARQLExecuter']
+        }
+
+        response = requests.post(url, headers=headers, data=data, timeout=60)
+
+        uuid = response.json()['inGraph']
+        sparql_endpoint = response.json()['endpoint']
+
+        query = f"""
+        PREFIX qa: <http://www.wdaqua.eu/qa#>
+        PREFIX oa: <http://www.w3.org/ns/openannotation/core/>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+        SELECT ?value
+        FROM <{uuid}>
+        WHERE {{
+            ?answerJson a qa:AnswerJson ;
+                rdf:value ?value .
+        }}"""
+
+        result = execute(query, sparql_endpoint)
+
+        rq_vars = result["head"]["vars"]
+
+        context = ""
+
+        for b in result["results"]["bindings"]:
+            context += " ".join([f'{b[var]["value"]}' for var in rq_vars]) + "\n"
+            logger.info(f"Var1: {b[rq_vars[0]]['value']}")
+
+        return context
+    except Exception as e:
+        logger.error(str(e))
+        return ""
 
 def fetch_pizza_descriptions_from_wikidata() -> dict:
     # note, this is a static SPARQL query that returns descriptions for all available pizzas
