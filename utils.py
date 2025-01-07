@@ -8,6 +8,8 @@ from SPARQLWrapper import SPARQLWrapper, JSON
 import logging
 
 
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -78,7 +80,7 @@ def call_qanary_pipeline(question: str):
         data = {
             'question': question,
             'componentfilterinput': '',
-            'componentlist[]': ['Wikidata_Lookup_NEL_component', 'Wikidata_Query_Builder_component', 'QE-Python-SPARQLExecuter']
+            'componentlist[]': ['Wikidata_Lookup_NEL_component', 'Wikidata_Query_Builder_component', 'QE-Python-SPARQLExecuter'] # our component sequence
         }
 
         response = requests.post(url, headers=headers, data=data, timeout=60)
@@ -98,7 +100,7 @@ def call_qanary_pipeline(question: str):
                 rdf:value ?value .
         }}"""
 
-        result = execute(query, sparql_endpoint)
+        result = eval(execute(query, sparql_endpoint)["results"]["bindings"][0]["value"]["value"]) # response format from Virtuoso is weird
 
         rq_vars = result["head"]["vars"]
 
@@ -106,7 +108,6 @@ def call_qanary_pipeline(question: str):
 
         for b in result["results"]["bindings"]:
             context += " ".join([f'{b[var]["value"]}' for var in rq_vars]) + "\n"
-            logger.info(f"Var1: {b[rq_vars[0]]['value']}")
 
         return context
     except Exception as e:
