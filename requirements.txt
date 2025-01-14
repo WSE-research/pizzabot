@@ -6,3 +6,4 @@ openai
 fuzzywuzzy
 langdetect
 python-Levenshtein
+streamlit
