@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from utils import post_order, validate_pizza_name, check_customer_address, BasicFunctions, get_pizza_menu, check_order_intention, generate_pizza_description, fetch_pizza_descriptions_from_wikidata
+from utils import logger, post_order, validate_pizza_name, check_customer_address, BasicFunctions, get_pizza_menu, check_order_intention, generate_pizza_description, call_qanary_pipeline
 
 from langgraph.graph import END, StateGraph
 from langchain_core.messages import (
@@ -153,7 +153,8 @@ class DescriptionNode:
         Returns a description of the pizza
         """
         _input = state[INPUT] # user message
-        context = fetch_pizza_descriptions_from_wikidata() # fetching the context from wikidata
+        context = call_qanary_pipeline(_input) # fetching the context from wikidata
+        logger.info(f"Context from Qanary: {context}")
         description = generate_pizza_description(_input, str(context)) # generating the description with LLM
         state["messages"].append(AIMessage(content=description))
 
@@ -274,7 +275,7 @@ if __name__ == "__main__":
     description_node = DescriptionNode()
 
     workflow = StateGraph(ChatbotState)
-    #TODO set entrypoint as language detection-node
+    # TODO set entrypoint as language detection-node
     #either use it to set a state (enum)
     #or route to language dependant nodes
     workflow.add_node(Nodes.CHECKER.value, checker_node.invoke)
