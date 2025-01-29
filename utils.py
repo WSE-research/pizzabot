@@ -71,6 +71,8 @@ def call_qanary_pipeline(question: str):
     """
     try:
         url = f'{qanary_api_base}/startquestionansweringwithtextquestion'
+        
+        logger.info(f"Calling Qanary pipeline at: {url}")
 
         headers = {
             'Origin': qanary_api_base,
@@ -80,7 +82,7 @@ def call_qanary_pipeline(question: str):
         data = {
             'question': question,
             'componentfilterinput': '',
-            'componentlist[]': ['Wikidata_Lookup_NEL_component', 'Wikidata_Query_Builder_component', 'QE-Python-SPARQLExecuter'] # our component sequence
+            'componentlist[]': ['Alex-Wikidata_Lookup_NEL_component', 'Alex-Wikidata_Query_Builder_component', 'Alex-QE-Python-SPARQLExecuter'] # our component sequence
         }
 
         response = requests.post(url, headers=headers, data=data, timeout=60)
