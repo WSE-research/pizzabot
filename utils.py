@@ -22,10 +22,25 @@ openai_api_key = settings.openai_api_key
 openai_api_base = settings.openai_api_base
 qanary_api_base = settings.qanary_api_base
 
-client = OpenAI(
-    api_key=openai_api_key,
-    base_url=openai_api_base,
-)
+_openai = None          # the client, once something has actually needed it
+
+
+def _client() -> OpenAI:
+    """The OpenAI client, built on first use and never at import time.
+
+    A fresh checkout has no .env yet, and offline mode has no endpoint at all
+    -- importing this module must work in both cases. The only three callers
+    are the LLM-backed functions below, and each of them checks offline_mode()
+    before it gets here.
+    """
+    global _openai
+    if _openai is None:
+        if not openai_api_key:
+            raise RuntimeError(
+                "No OPENAI_API_KEY. Copy .env-example to .env and fill it in, "
+                "or set PIZZABOT_OFFLINE=1 to use the rule implementations.")
+        _openai = OpenAI(api_key=openai_api_key, base_url=openai_api_base)
+    return _openai
 
 # =========================================================================
 # Offline mode
@@ -120,7 +135,7 @@ Here is the context with pizza descriptions: {context}
 Here is the user message: {_input}
 """
 
-    chat_response = client.chat.completions.create(
+    chat_response = _client().chat.completions.create(
         model=settings.model_name,
         messages=[
             {"role": "system", "content": """You are a Pizza Salesman.
@@ -257,7 +272,7 @@ def check_order_intention(_input):
     example_string_2 = "How are you doing today?"
     assistant_docstring_2 = """{"intention": False}"""
 
-    chat_response = client.chat.completions.create(
+    chat_response = _client().chat.completions.create(
         model=settings.model_name,
         messages=[
             {"role": "system", "content": """You are an Input Validation Tools.
@@ -332,7 +347,7 @@ def check_customer_address(_input):
 
     example_string = "My address is Gustav-Freytag Straße 12A in Leipzig."
     assistant_docstring = """[{"Leipzig": "CITY"}, {"Gustav-Freytag Straße": "STREET"}, {"12A": "HOUSE_NUMBER"}]"""
-    chat_response = client.chat.completions.create(
+    chat_response = _client().chat.completions.create(
         model=settings.model_name,
         messages=[
             {"role": "system", "content": """You are a Named Entity Recognition Tool.
