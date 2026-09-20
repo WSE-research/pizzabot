@@ -44,6 +44,12 @@ def load(path: Path | str | None = None, override: bool = True) -> bool:
 load()                                                # the frontend's own .env
 
 
+# The Pizza API is public and the whole course points at this one instance, so
+# a checkout with no .env still answers "what pizzas do you have?". Credentials
+# have no such default: a missing key has to be a missing key.
+PIZZA_API_DEFAULT = "https://wse-research.org/pizza-api"
+
+
 def _truthy(value: str) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
@@ -58,7 +64,7 @@ class Settings:
     # --- services ---------------------------------------------------------
     @property
     def pizza_api_base(self) -> str:
-        return self.get("PIZZA_API_BASE").rstrip("/")
+        return (self.get("PIZZA_API_BASE") or PIZZA_API_DEFAULT).rstrip("/")
 
     @property
     def openai_api_base(self) -> str:
