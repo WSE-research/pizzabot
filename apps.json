@@ -1,0 +1,31 @@
+{
+  "comment": "Which LangGraph implementations the frontend offers. Paths come from .env (${VAR}); adding an iteration is a line here, never a change in the frontend.",
+  "apps": [
+    {
+      "key": "demo",
+      "title": "Demo — this repository",
+      "module": "pizzabot",
+      "path": ".",
+      "meta": "demo",
+      "note": "checker / retrieval / order_form / description"
+    },
+    {
+      "key": "l3-static",
+      "title": "L3 — Exercise 3, static configuration",
+      "module": "pizzabot.graph",
+      "path": "${L3_PATH}",
+      "env": {"BOT_CONFIG": "static"},
+      "meta": "l3",
+      "note": "iteration 1 rules behind both recognizers"
+    },
+    {
+      "key": "l3-llm",
+      "title": "L3 — Exercise 3, LLM configuration",
+      "module": "pizzabot.graph",
+      "path": "${L3_PATH}",
+      "env": {"BOT_CONFIG": "llm"},
+      "meta": "l3",
+      "note": "same process model, LLM-backed recognizers with the rules as fallback"
+    }
+  ]
+}

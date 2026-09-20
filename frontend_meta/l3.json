@@ -1,0 +1,147 @@
+{
+  "title": "L3 — one process model, two configurations (Exercise 3)",
+  "state_keys": {
+    "input": "the current utterance",
+    "messages": "the dialog, append only (say() adds one)",
+    "slots": "the frame: pizza_name, pizza_id, address",
+    "expected": "the slot the form asked for last turn — the router reads it",
+    "order_id": "set by order_placement once POST /order answered",
+    "ended": "True once confirmation ran"
+  },
+  "nodes": {
+    "router": {
+      "order": 1,
+      "station": "the counter",
+      "purpose": "Decides which component handles this turn: the slot we asked for last turn wins, then an ordering phrase, then a menu name, then help.",
+      "failure": "No rule matched -> help, never a guess."
+    },
+    "pizza_recognition": {
+      "order": 2,
+      "station": "which pizza?",
+      "purpose": "Utterance -> a pizza from the live menu (name + id). Static configuration: the iteration-1 rule; LLM configuration: the service call with that rule as its fallback.",
+      "services": [
+        "Pizza API: /pizza"
+      ],
+      "failure": "Nothing recognised -> no slot written; the form asks again."
+    },
+    "address_recognition": {
+      "order": 3,
+      "station": "where to?",
+      "purpose": "Utterance -> a complete address (street, house number, city), validated by the Pizza API. Same seam as the pizza recognizer.",
+      "services": [
+        "Pizza API: /address/validate"
+      ],
+      "failure": "Incomplete or undeliverable -> no slot written, never half an address."
+    },
+    "order_form": {
+      "order": 4,
+      "station": "the order pad",
+      "purpose": "Asks for the first missing slot — at most one question per turn — and sets `expected` so the router knows where the next answer belongs.",
+      "failure": "Nothing missing -> says nothing and lets the order through."
+    },
+    "order_placement": {
+      "order": 5,
+      "station": "the oven",
+      "purpose": "POST /order — the only side effect this process has on the world.",
+      "services": [
+        "Pizza API: /order"
+      ],
+      "failure": "The API refuses -> the error travels as a message, not as a crash."
+    },
+    "confirmation": {
+      "order": 6,
+      "station": "the door",
+      "purpose": "The closing message with the order id, and the end of the dialog.",
+      "failure": "—"
+    },
+    "help": {
+      "order": 7,
+      "station": "the phone",
+      "purpose": "What we say when no rule understood the utterance.",
+      "failure": "—"
+    }
+  },
+  "examples": [
+    {
+      "label": "Say hello",
+      "text": "Hello",
+      "shows": "no ordering intent -> the help node answers (iteration 1, slide 1.x)",
+      "when": {
+        "slots": "unset",
+        "ended": false
+      }
+    },
+    {
+      "label": "Order by name",
+      "text": "I would like a Margherita",
+      "shows": "the router sees an ordering phrase, pizza_recognition fills two slots",
+      "when": {
+        "expected": "unset",
+        "ended": false
+      }
+    },
+    {
+      "label": "Just the menu word",
+      "text": "menu",
+      "shows": "an ordering phrase without a pizza -> the form asks which one",
+      "when": {
+        "slots": "unset",
+        "ended": false
+      }
+    },
+    {
+      "label": "Answer the pizza question",
+      "text": "Quattro Formaggi",
+      "shows": "`expected` routes the turn straight to pizza_recognition",
+      "when": {
+        "expected": "pizza_name",
+        "ended": false
+      }
+    },
+    {
+      "label": "Pizza we do not have",
+      "text": "Pizza Napoli",
+      "shows": "defined failure: no slot written, the form repeats the question",
+      "when": {
+        "expected": "pizza_name",
+        "ended": false
+      }
+    },
+    {
+      "label": "Give the address",
+      "text": "deliver it to 5 Rue Michelet, Saint-Étienne",
+      "shows": "address_recognition + validation by the Pizza API, then the order is placed",
+      "when": {
+        "expected": "address",
+        "ended": false
+      }
+    },
+    {
+      "label": "Half an address",
+      "text": "Rue Michelet",
+      "shows": "no house number, no city -> nothing is written; there is no half address",
+      "when": {
+        "expected": "address",
+        "ended": false
+      }
+    },
+    {
+      "label": "Outside the delivery area",
+      "text": "Fifth Avenue 1, New York",
+      "shows": "the API decides the delivery area, not the code",
+      "when": {
+        "expected": "address",
+        "ended": false
+      }
+    },
+    {
+      "label": "The lecture sentence (LLM)",
+      "text": "can I order the four-cheese one to number 5 in the Rue Michelet here in Saint-Étienne?",
+      "shows": "one sentence, both slots — works in the LLM configuration, falls back to the rule in the static one",
+      "when": {
+        "expected": "unset",
+        "ended": false
+      }
+    }
+  ]
+}

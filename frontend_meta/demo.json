@@ -1,0 +1,74 @@
+{
+  "title": "Demo — checker, retrieval, order form, description",
+  "state_keys": {
+    "input": "the current user utterance",
+    "slots": "the filled order form (pizza_name, customer_address)",
+    "messages": "the dialog, including the FunctionMessages that mark the open slot",
+    "active_order": "an order is in progress",
+    "confirm_order": "a confirmation was asked for",
+    "current_intent": "default | description",
+    "invalid": "the last input was rejected",
+    "ended": "the dialog is over",
+    "pizza_id": "the id the Pizza API knows the pizza by",
+    "customer_address": "(city, street, house number), validated by the API",
+    "order_id": "the id of the placed order"
+  },
+  "nodes": {
+    "checker": {
+      "order": 1,
+      "station": "the counter",
+      "purpose": "The router of the process. Decides what the utterance is: a description question, an answer to the slot the bot just asked for, or a new ordering intent — and rejects what is none of them.",
+      "services": ["LLM: check_order_intention", "LLM: check_customer_address", "Pizza API: /pizza, /address/validate"],
+      "failure": "Unknown pizza or undeliverable address -> invalid = True and a message saying so. Nothing is guessed."
+    },
+    "retrieval": {
+      "order": 2,
+      "station": "the notepad",
+      "purpose": "Writes the value the checker accepted into the slot the last FunctionMessage asked for — the extraction already happened in the checker.",
+      "failure": "No FunctionMessage to answer -> the state passes through unchanged."
+    },
+    "order_form": {
+      "order": 3,
+      "station": "the order pad",
+      "purpose": "The form itself: asks for the next missing slot, and once pizza and address are filled, places the order and returns the order id.",
+      "services": ["Pizza API: /order"],
+      "failure": "The API refuses the order -> one honest message, dialog ends."
+    },
+    "description": {
+      "order": 4,
+      "station": "the menu talk",
+      "purpose": "Answers a question about a pizza: context for the question from Wikidata through the Qanary pipeline, phrased by the LLM.",
+      "services": ["Qanary pipeline", "Wikidata SPARQL", "LLM: generate_pizza_description"],
+      "failure": "No context from Qanary -> the model answers from the question alone."
+    }
+  },
+  "examples": [
+    {"label": "Start an order", "text": "I want to order a pizza",
+     "shows": "checker recognises the intent, the order form asks for the first slot",
+     "when": {"active_order": false, "ended": false}},
+    {"label": "Off topic", "text": "How are you doing today?",
+     "shows": "no order intent -> the bot says what it can do instead of improvising",
+     "when": {"active_order": false, "ended": false}},
+    {"label": "Ask about a pizza", "text": "Tell me more about the Hawaiian pizza",
+     "shows": "the description branch: Qanary + Wikidata context, answered by the LLM",
+     "requires": ["description"], "when": {"ended": false}},
+    {"label": "Name a pizza", "text": "Hawaiian",
+     "shows": "fuzzy match against the live menu, then the address slot",
+     "when": {"active_order": true, "slots.pizza_name": "unset", "ended": false}},
+    {"label": "Misspell a pizza", "text": "Hawai",
+     "shows": "the fuzzy match still resolves it — threshold 80 in validate_pizza_name",
+     "when": {"active_order": true, "slots.pizza_name": "unset", "ended": false}},
+    {"label": "Pizza we do not have", "text": "Pizza Napoli",
+     "shows": "defined failure: invalid = True, the bot asks again",
+     "when": {"active_order": true, "slots.pizza_name": "unset", "ended": false}},
+    {"label": "Give an address", "text": "Maksim Gorki Str 58, Leipzig",
+     "shows": "address extraction, then validation by the Pizza API",
+     "when": {"slots.pizza_name": "set", "slots.customer_address": "unset", "ended": false}},
+    {"label": "A French address", "text": "5 Rue Michelet, Saint-Etienne",
+     "shows": "the delivery area is the API's data, not a constant in the code",
+     "when": {"slots.pizza_name": "set", "slots.customer_address": "unset", "ended": false}},
+    {"label": "Address we do not deliver to", "text": "Fifth Avenue 1, New York",
+     "shows": "the API rejects it -> invalid = True, the bot asks again",
+     "when": {"slots.pizza_name": "set", "slots.customer_address": "unset", "ended": false}}
+  ]
+}
