@@ -320,6 +320,23 @@ input::placeholder, textarea::placeholder { color: var(--slate) !important; }
 #pz-welcome .stButton > button { text-align: center; }
 #pz-welcome .pz-board-title { margin-top: 0.9rem; }
 
+/* --- the footer: who built this, and where the source is -------------- */
+/* one flex row: the attribution stays on the left, the repository is pushed
+   to the right. It wraps to two lines on a narrow window rather than
+   shrinking the text. */
+.st-key-pz-footer { margin: 2.4rem 0 0.2rem 0; }
+.pz-footer {
+    display: flex; flex-wrap: wrap; gap: 0.35rem 1.4rem;
+    align-items: baseline; justify-content: space-between;
+    border-top: 1px dashed var(--line);
+    padding-top: 0.7rem;
+    font-family: var(--font-body); font-size: 0.82rem; color: var(--slate);
+}
+.pz-footer a { color: var(--tomato); text-decoration: none;
+               border-bottom: 1px solid transparent; }
+.pz-footer a:hover, .pz-footer a:focus { border-bottom-color: var(--tomato); }
+.pz-footer .pz-source { font-family: var(--font-mono); font-size: 0.78rem; }
+
 /* --- the counter edge: Streamlit's bottom strip ----------------------- */
 /* stBottom is transparent and hands the colour to an inner div, so both
    need the dough; the strip also gets the same dashed crust line as the
@@ -618,6 +635,30 @@ def header():
         with st.container(key="pz-status"):
             st.markdown(status_line(), unsafe_allow_html=True)
         st.markdown('<div class="pz-rule">&nbsp;</div>', unsafe_allow_html=True)
+
+
+# Where the group and the source live. The utm parameters follow the ones the
+# other WSE web tools use, so a visit from this app is recognisable.
+WSE_RESEARCH = ("https://wse-research.org/?utm_source=pizzabot&utm_medium=app"
+                "&utm_campaign=pizzabot&utm_content=footer")
+HTWK_LEIPZIG = "https://www.htwk-leipzig.de/"
+REPOSITORY = "https://github.com/WSE-research/pizzabot"
+
+
+def footer():
+    """Who built this, on the left; where the source is, on the right."""
+    with st.container(key="pz-footer"):
+        st.markdown(
+            f'<div class="pz-footer">'
+            f'<span>Built by '
+            f'<a href="{WSE_RESEARCH}" target="_blank" rel="noopener">'
+            f'WSE Research</a> at '
+            f'<a href="{HTWK_LEIPZIG}" target="_blank" rel="noopener">'
+            f'Leipzig University of Applied Sciences</a></span>'
+            f'<a class="pz-source" href="{REPOSITORY}" target="_blank" '
+            f'rel="noopener" title="Source code on GitHub">'
+            f'{REPOSITORY.split("//", 1)[1]}</a>'
+            f'</div>', unsafe_allow_html=True)
 
 
 def implementation_picker():
@@ -920,6 +961,7 @@ def create_chat_app():
 
     # first visit: ask for the name and the style before anything is loaded
     if shopfront.welcome():
+        footer()          # the welcome screen is the first page anybody sees
         return
     shopfront.remember()
 
@@ -951,6 +993,8 @@ def create_chat_app():
         if system_column is not None:
             with system_column:
                 system_pane()
+
+    footer()
 
     if not current_app().is_ended(st.session_state.bot_state):
         # no container around this one: it would leave Streamlit's fixed
