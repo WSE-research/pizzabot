@@ -1,0 +1,14 @@
+# Pizzeria palette: dough paper, tomato accent, charcoal ink.
+[theme]
+base = "light"
+primaryColor = "#C8102E"
+backgroundColor = "#FFF8EC"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#2B211A"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
