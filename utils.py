@@ -45,10 +45,10 @@ def _client() -> OpenAI:
 # =========================================================================
 # Offline mode
 # -------------------------------------------------------------------------
-# Three functions below need an OpenAI-compatible endpoint (by default the
-# HTWK GPU server, which is reachable only inside the university network).
-# With PIZZABOT_OFFLINE=1 they are replaced by deterministic rules, so the
-# bot can be demonstrated in a lecture hall without VPN.
+# Three functions below need an OpenAI-compatible endpoint, whichever one
+# OPENAI_API_BASE names. With PIZZABOT_OFFLINE=1 they are replaced by
+# deterministic rules, so the bot can be demonstrated in a lecture hall with
+# no endpoint reachable at all -- no VPN, no key, no network.
 #
 # This is not a hack: the rule version *is* the static implementation of
 # iteration 1, and the LLM version is iteration 2 behind the same contract

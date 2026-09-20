@@ -32,7 +32,7 @@ That is the whole point of the repository: students write their own `build_graph
 * *The process, drawn* — the model is generated on load from `get_graph()` and cached under a hash of its structure. Change the graph, get a new picture; change nothing, pay nothing.
 * *Your bug, where you can read it* — a node that raises answers in the conversation and adds a red row to the ticket; the app stays alive. An entry that cannot be loaded is listed with the reason instead of vanishing.
 * *It is somebody's pizzeria* — the name over the door and one of five styles are asked once and kept in cookies. Styles are data, not CSS.
-* *Runs with no LLM at all* — `PIZZABOT_OFFLINE=1` swaps each AI-backed step for a deterministic rule of the same signature, so a demo survives a room with no VPN and a course key that has run out.
+* *Runs with no LLM at all* — `PIZZABOT_OFFLINE=1` swaps each AI-backed step for a deterministic rule of the same signature, so a demo survives a room with no VPN, no key and no network — and a fresh checkout runs before anyone has configured anything.
 * *A guided tour* — eleven steps over the real interface on a first visit, and from a button afterwards.
 
 image::assets/pizzabot-ui.jpg[The Pizza Bot web frontend: the shop sign and the implementation picker above, the conversation on the left, the kitchen view with the ticket of the last turn on the right]
@@ -325,19 +325,19 @@ Everything comes from `.env` (see `.env-example`) — endpoints, credentials, th
 
 [source]
 ----
-OPENAI_API_KEY=SECRET
-OPENAI_API_BASE=https://your-openai-compatible-endpoint/v1
-MODEL_NAME=the model that endpoint serves
+OPENAI_API_BASE=          # any OpenAI-compatible endpoint, or nothing
+OPENAI_API_KEY=           # whatever that endpoint wants
+MODEL_NAME=               # a name from its /models
+PIZZABOT_OFFLINE=1        # the rules instead of the LLM
 PIZZA_API_BASE=https://wse-research.org/pizza-api
 QANARY_API_BASE=http://demos.swe.htwk-leipzig.de:40111
-PIZZABOT_OFFLINE=0
 PIZZABOT_APP=demo
 L3_PATH=/path/to/saint-etienne-exercise-03/student
 ----
 
-`OPENAI_API_BASE` is any OpenAI-compatible endpoint — the HTWK GPU server inside the university network, a hosted service, or a local one. Query its `/models` for the name to put in `MODEL_NAME`. A shell `PIZZABOT_OFFLINE` wins over the file, which is how `run_local.sh` reports its probe; for everything else the file wins.
+*`.env-example` names no particular LLM.* It is shipped with the three LLM variables empty and `PIZZABOT_OFFLINE=1`, so `./run_local.sh` on a fresh checkout starts a working bot with no key, no endpoint and no account anywhere. Fill the three in — a hosted service, your institution's server, one on your own machine — and `run_local.sh` probes the endpoint and turns offline mode off by itself. A shell `PIZZABOT_OFFLINE` wins over the file, which is how it reports that probe; for everything else the file wins.
 
-`PIZZA_API_BASE` has a default, so a fresh checkout answers *what pizzas do you have?* before anyone has written a `.env`. Credentials have no such default: a missing key stays a missing key, and says so.
+`PIZZA_API_BASE` has a built-in default, so even an empty `.env` answers *what pizzas do you have?*. Credentials have no such default: a missing key stays a missing key, and says so.
 
 == The process picture
 

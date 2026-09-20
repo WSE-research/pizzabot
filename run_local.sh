@@ -137,7 +137,7 @@ if [[ -n "${OPENAI_API_BASE:-}" ]]; then
         ok "LLM endpoint answers (HTTP $LLM_CODE) -- ${MODEL_NAME:-no model set}"
     else
         warn "LLM endpoint ${OPENAI_API_BASE} unreachable (HTTP $LLM_CODE)"
-        warn "the HTWK GPU server is only reachable inside the university network / VPN"
+        warn "check OPENAI_API_BASE in .env -- a campus endpoint usually needs the university network or a VPN"
     fi
 else
     warn "OPENAI_API_BASE is not set"
