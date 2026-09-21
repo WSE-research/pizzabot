@@ -20,6 +20,7 @@ or, with the endpoint checks and the offline fallback, ./run_local.sh
 
 from __future__ import annotations
 
+import base64
 import time
 from pathlib import Path
 
@@ -32,7 +33,7 @@ import diagram
 import shopfront
 import tutorial
 from app_loader import KIND_LABEL, LLM, RULE
-from settings import settings
+from settings import HERE, settings
 
 GREETING = ("Hi! I am a pizza bot. I can help you order a pizza. "
             "What would you like to order?")
@@ -321,21 +322,35 @@ input::placeholder, textarea::placeholder { color: var(--slate) !important; }
 #pz-welcome .pz-board-title { margin-top: 0.9rem; }
 
 /* --- the footer: who built this, and where the source is -------------- */
-/* one flex row: the attribution stays on the left, the repository is pushed
-   to the right. It wraps to two lines on a narrow window rather than
-   shrinking the text. */
-.st-key-pz-footer { margin: 2.4rem 0 0.2rem 0; }
+/* It belongs below the input, on the bottom edge of the screen, so it is
+   lifted out of the page flow and fixed there. Streamlit's own bottom bar
+   (stBottom) is fixed at bottom: 0 as well, so the room for this strip is
+   made by padding the bar's inner block -- see the block below. The element
+   still renders inside the page, which is what gives it the id and lets the
+   guided tour point at it. */
+/* The bar is fixed, not the Streamlit container around it: that container is
+   a vertical block whose height collapses to a few pixels, and a fixed box
+   shorter than its content spills off the bottom of the screen. */
+.st-key-pz-footer { height: 0; }
 .pz-footer {
-    display: flex; flex-wrap: wrap; gap: 0.35rem 1.4rem;
-    align-items: baseline; justify-content: space-between;
-    border-top: 1px dashed var(--line);
-    padding-top: 0.7rem;
-    font-family: var(--font-body); font-size: 0.82rem; color: var(--slate);
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 999990;
+    background: var(--dough);
 }
-.pz-footer a { color: var(--tomato); text-decoration: none;
+.pz-footer-row {
+    display: flex; flex-wrap: wrap; gap: 0.1rem 1.4rem;
+    align-items: center; justify-content: space-between;
+    max-width: 1500px; margin: 0 auto; padding: 0.24rem 1rem 0.46rem 1rem;
+    font-family: var(--font-body); font-size: 0.8rem; color: var(--slate);
+}
+.pz-footer-row a { color: var(--tomato); text-decoration: none;
                border-bottom: 1px solid transparent; }
-.pz-footer a:hover, .pz-footer a:focus { border-bottom-color: var(--tomato); }
-.pz-footer .pz-source { font-family: var(--font-mono); font-size: 0.78rem; }
+.pz-footer-row a:hover, .pz-footer-row a:focus { border-bottom-color: var(--tomato); }
+.pz-footer-row .pz-source { font-family: var(--font-mono); font-size: 0.76rem; }
+/* the cube rides on the text baseline and scales with it */
+.pz-footer-row .pz-cube { height: 1.25em; width: auto; vertical-align: -0.3em;
+                      margin-right: 0.32em; }
+/* the welcome screen has no bottom bar, so it makes its own room */
+#pz-welcome { padding-bottom: 2.6rem; }
 
 /* --- the counter edge: Streamlit's bottom strip ----------------------- */
 /* stBottom is transparent and hands the colour to an inner div, so both
@@ -348,7 +363,8 @@ input::placeholder, textarea::placeholder { color: var(--slate) !important; }
     border-top: 3px dashed var(--crust);
 }
 [data-testid="stBottomBlockContainer"] {
-    max-width: 1500px; padding: 0.75rem 1rem 1.1rem 1rem;
+    /* the bottom padding is the strip the footer sits in */
+    max-width: 1500px; padding: 0.75rem 1rem 2.5rem 1rem;
 }
 [data-testid="stChatInput"] {
     border: 2px solid var(--char); border-radius: 999px;
@@ -645,20 +661,41 @@ HTWK_LEIPZIG = "https://www.htwk-leipzig.de/"
 REPOSITORY = "https://github.com/WSE-research/pizzabot"
 
 
+@st.cache_data(show_spinner=False)
+def wse_mark() -> str:
+    """The WSE cube as a data URI.
+
+    Streamlit serves nothing out of `assets/` unless static serving is turned
+    on, and turning it on would publish the whole folder -- for one 128px mark
+    that is the wrong trade. Read once, kept by the cache for the process.
+    """
+    path = HERE / "assets" / "wse-logo.png"
+    if not path.is_file():                      # the mark is decoration
+        return ""
+    return "data:image/png;base64," + base64.b64encode(
+        path.read_bytes()).decode("ascii")
+
+
 def footer():
-    """Who built this, on the left; where the source is, on the right."""
+    """Who built this, on the left; where the source is, on the right.
+
+    Fixed to the bottom edge of the screen, under the input -- see the
+    `.st-key-pz-footer` rule.
+    """
+    mark = wse_mark()
+    cube = f'<img class="pz-cube" src="{mark}" alt="">' if mark else ""
     with st.container(key="pz-footer"):
         st.markdown(
-            f'<div class="pz-footer">'
+            f'<div class="pz-footer"><div class="pz-footer-row">'
             f'<span>Built by '
             f'<a href="{WSE_RESEARCH}" target="_blank" rel="noopener">'
-            f'WSE Research</a> at '
+            f'{cube}WSE Research</a> at '
             f'<a href="{HTWK_LEIPZIG}" target="_blank" rel="noopener">'
             f'Leipzig University of Applied Sciences</a></span>'
             f'<a class="pz-source" href="{REPOSITORY}" target="_blank" '
             f'rel="noopener" title="Source code on GitHub">'
             f'{REPOSITORY.split("//", 1)[1]}</a>'
-            f'</div>', unsafe_allow_html=True)
+            f'</div></div>', unsafe_allow_html=True)
 
 
 def implementation_picker():
@@ -994,8 +1031,6 @@ def create_chat_app():
             with system_column:
                 system_pane()
 
-    footer()
-
     if not current_app().is_ended(st.session_state.bot_state):
         # no container around this one: it would leave Streamlit's fixed
         # bottom bar (stBottom) and scroll away with the page. The bar itself
@@ -1004,6 +1039,8 @@ def create_chat_app():
         if user_input:
             st.session_state.pending = user_input
             st.rerun()
+
+    footer()          # last in the page, and fixed to the bottom of the screen
 
     if st.session_state.clearing:
         # the page above has been sent to the browser and is fading out; wait
