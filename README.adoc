@@ -36,7 +36,7 @@ That is the whole point of the repository: students write their own `build_graph
 * *Runs with no LLM at all* — `PIZZABOT_OFFLINE=1` swaps each AI-backed step for a deterministic rule of the same signature, so a demo survives a room with no VPN, no key and no network — and a fresh checkout runs before anyone has configured anything.
 * *A guided tour* — eleven steps over the real interface on a first visit, and from a button afterwards.
 
-image::assets/pizzabot-ui.jpg[The Pizza Bot web frontend: the shop sign and the implementation picker above, the conversation on the left, the kitchen view with the ticket of the last turn on the right]
+image::assets/pizzabot-ui.jpg["The Pizza Bot web frontend: the shop sign and the implementation picker above, the conversation on the left, the kitchen view with the ticket of the last turn on the right"]
 
 '''
 
