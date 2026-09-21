@@ -12,16 +12,17 @@ ifdef::env-github[]
 endif::[]
 
 ++++
-<a href="https://wse-research.org/?utm_source=pizzabot&utm_medium=readme&utm_campaign=pizzabot&utm_content=logo" title="go to WSE Research">
-<img align="right" role="right" height="128" src="assets/wse-logo.png"/>
-</a>
+<!-- the bot's own mark: the slice the frontend uses as its avatar, rendered
+     from the emoji so it looks the same here as it does in the app. The WSE
+     cube is beside the attribution below, and in the footer of the app. -->
+<img align="right" role="right" height="128" src="assets/pizza-mark.png" alt=""/>
 ++++
 
 = Pizza Bot
 
 Order a pizza, slot by slot — a task-oriented dialog process built with https://langchain-ai.github.io/langgraph/[LangGraph], behind a web frontend that will host *any* LangGraph implementation and explain it while it runs.
 
-A teaching tool of the https://wse-research.org/[Web & Software Engineering research group] at https://www.htwk-leipzig.de/[Leipzig University of Applied Sciences (HTWK Leipzig, Germany)], written for the *Question Answering & Chatbots* course.
+image:assets/wse-logo.png[WSE,20,20] A teaching tool of the https://wse-research.org/[Web & Software Engineering research group] at https://www.htwk-leipzig.de/[Leipzig University of Applied Sciences (HTWK Leipzig, Germany)], written for the *Question Answering & Chatbots* course.
 
 A dialog system is easy to demonstrate and hard to teach: the interesting part — which node ran, what it wrote, why the process took that edge — happens where nobody can see it. This frontend puts that part on the screen beside the conversation, and it reads all of it out of the *compiled graph*, so it is true of whatever implementation is loaded rather than of this one bot.
 
@@ -35,7 +36,7 @@ That is the whole point of the repository: students write their own `build_graph
 * *Runs with no LLM at all* — `PIZZABOT_OFFLINE=1` swaps each AI-backed step for a deterministic rule of the same signature, so a demo survives a room with no VPN, no key and no network — and a fresh checkout runs before anyone has configured anything.
 * *A guided tour* — eleven steps over the real interface on a first visit, and from a button afterwards.
 
-image::assets/pizzabot-ui.jpg[The Pizza Bot web frontend: the shop sign and the implementation picker above, the conversation on the left, the kitchen view with the ticket of the last turn on the right]
+image::assets/pizzabot-ui.jpg["The Pizza Bot web frontend: the shop sign and the implementation picker above, the conversation on the left, the kitchen view with the ticket of the last turn on the right"]
 
 '''
 
