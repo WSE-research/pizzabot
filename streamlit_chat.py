@@ -1099,12 +1099,19 @@ def render_test_runs():
                 'when the expected answer is contained in what the bot said.'
                 '</div>', unsafe_allow_html=True)
     with st.container(key="pz-button-run-tests"):
+        # off by default: the last turn completes the order, and a working
+        # implementation then places a real one with the Pizza API
+        place_order = st.checkbox(
+            "Place the real order", value=False, key="pz-widget-place-order",
+            help="Also sends the last utterance of the dialogue, which "
+                 "completes the order — a working implementation then places "
+                 "a real order with the Pizza API, as test_pizzabot.py does. "
+                 "Off, that turn is skipped and left out of the verdict.")
         run_now = st.button(
             f"Run the test dialogue on {app.key}", key="pz-widget-run-tests",
             help="Sends the utterances of the example dialogue one after the "
                  "other into a fresh state, grades every answer against the "
-                 "expected one and stores the run in runs/. The last turn "
-                 "places an order with the Pizza API, as test_pizzabot.py does.")
+                 "expected one and stores the run in runs/.")
     if run_now:
         progress = st.progress(0.0, text="starting…")
 
@@ -1113,7 +1120,7 @@ def render_test_runs():
                               text=f"turn {position} of {total}")
 
         try:                                    # keep the UI alive
-            run = test_runs.execute(app, on_turn=on_turn)
+            run = test_runs.execute(app, on_turn=on_turn, place_order=place_order)
             st.session_state.last_run = test_runs.save(run).name
         except Exception as error:
             st.error(f"The test run did not complete: {type(error).__name__}: "
@@ -1139,13 +1146,13 @@ def render_test_runs():
         rows.append(
             f'<tr class="{"set" if fresh else ""}">'
             f'<td>{html.escape(run.get("started", "")[:16].replace("T", " "))}</td>'
-            f'<td title="{html.escape(run.get("title", ""))}">'
-            f'{html.escape(run.get("implementation", ""))}</td>'
+            f'<td title="{html.escape(str(run.get("title", "")))}">'
+            f'{html.escape(str(run.get("implementation", "")))}</td>'
             f'<td>{html.escape(run_mode(run))}</td>'
-            f'<td class="{verdict}">{run["passed"]}/{run["total"]}</td>'
+            f'<td class="{verdict}">{html.escape(run_passed(run))}</td>'
             f'<td>{run.get("duration_ms", 0) / 1000:.1f}&nbsp;s</td>'
             f'<td>{run.get("llm_calls", 0)}</td>'
-            f'<td>{html.escape(run.get("revision", "") or "—")}</td></tr>')
+            f'<td>{html.escape(str(run.get("revision", "") or "—"))}</td></tr>')
     rows.append("</table></div>")
     st.markdown("".join(rows), unsafe_allow_html=True)
 
@@ -1153,7 +1160,7 @@ def render_test_runs():
         run = runs[index]
         return (f'{run.get("started", "")[:16].replace("T", " ")} · '
                 f'{run.get("implementation", "")} · {run_mode(run)} · '
-                f'{run["passed"]}/{run["total"]}')
+                f'{run_passed(run)}')
 
     chosen = st.selectbox("Turns of the run", range(len(runs)), format_func=label,
                           key=f"pz-widget-test-run-{runs[0].get('file', '')}")
@@ -1164,28 +1171,44 @@ def run_mode(run: dict) -> str:
     """Offline, or the model that answered -- the column that makes runs comparable."""
     if run.get("mode") == "offline":
         return "offline · rules"
-    return run.get("model") or "LLM"
+    return str(run.get("model") or "LLM")
+
+
+def run_passed(run: dict) -> str:
+    """Passed of graded turns -- and how many were not sent (the real order)."""
+    skipped = run.get("skipped", 0)
+    return f'{run["passed"]}/{run["total"]}' + (f" · {skipped} skipped"
+                                                if skipped else "")
 
 
 def render_run_turns(run: dict):
     """One card per turn: said, expected, answered, and how long it took."""
     for turn in run.get("turns", []):
-        passed = bool(turn.get("passed"))
-        css = "pz-station ran" if passed else "pz-station last"
-        mark = "PASS" if passed else "FAIL"
-        chip = "open" if passed else "problem"
+        if turn.get("skipped"):
+            css, mark, chip = "pz-station", "SKIPPED", "rule"
+        elif turn.get("passed"):
+            css, mark, chip = "pz-station ran", "PASS", "open"
+        else:
+            css, mark, chip = "pz-station last", "FAIL", "problem"
         facts = html.escape(f'{turn.get("ms", 0)} ms · similarity '
                             f'{turn.get("similarity", 0)} · '
                             f'{turn.get("llm_calls", 0)} LLM call(s)')
         lines = [f'<div class="{css}">',
                  f'<h4>{html.escape(str(turn.get("turn", "?")))}. '
                  f'<span class="pz-chip {chip}">{mark}</span>'
-                 f'<span class="role">{facts}</span></h4>',
+                 f'<span class="role">{"" if turn.get("skipped") else facts}'
+                 '</span></h4>',
                  f'<p><b>said</b> {html.escape(str(turn.get("input", "")))}</p>',
                  f'<p class="keys">expected: '
-                 f'{html.escape(str(turn.get("expected", "")))}</p>',
-                 f'<p class="keys">answered: '
-                 f'{html.escape(str(turn.get("actual") or "(nothing)"))}</p>']
+                 f'{html.escape(str(turn.get("expected", "")))}</p>']
+        if turn.get("skipped"):
+            lines.append('<p class="fail">not sent — this turn completes the '
+                         'order, and a working implementation would place a '
+                         'real one with the Pizza API. Tick <b>Place the real '
+                         'order</b> to send it.</p>')
+        else:
+            lines.append(f'<p class="keys">answered: '
+                         f'{html.escape(str(turn.get("actual") or "(nothing)"))}</p>')
         if turn.get("nodes"):
             path = " → ".join(str(node) for node in turn["nodes"])
             lines.append(f'<p class="keys">→ {html.escape(path)}</p>')
