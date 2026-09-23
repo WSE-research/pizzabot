@@ -106,6 +106,13 @@ class Settings:
     def app_registry(self) -> Path:
         return Path(self.get("PIZZABOT_APPS", str(HERE / "apps.json")))
 
+    # --- where the test runs are kept -------------------------------------
+    @property
+    def runs_dir(self) -> Path:
+        """One JSON file per run of the example dialogue -- see test_runs.py."""
+        folder = Path(self.expand(self.get("PIZZABOT_RUNS", "runs")))
+        return folder if folder.is_absolute() else HERE / folder
+
     def expand(self, value: str) -> str:
         """Resolve ${VAR} and ~ in a registry entry."""
         return os.path.expanduser(os.path.expandvars(value))

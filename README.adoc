@@ -53,7 +53,7 @@ toc::[]
 |The conversation, and under it a board of example inputs *known to work with the loaded implementation*, filtered by the step the dialog is in — one click sends them, the tooltip says what each demonstrates. Messages are served one at a time, 500 ms apart. *New order* fades the counter out, holds it empty for half a second and lets the bot greet again.
 
 |The kitchen view
-|Five tabs, all filled from the compiled graph. *Ticket*: the nodes that ran for the last sentence, in order, with their timings and the state keys each one wrote — read from `stream(..., stream_mode="updates")`, so it is what actually happened, not what should have. *Stations*: one card per node — what it does, where it routes, which service it calls, how it fails, where its code lives. *Order pad*: the state after the turn, filled values highlighted. *Floor plan*: the process model. *What happened*: the turn in plain language — the implementation's own account if it offers `what_happened(target)`, otherwise one assembled from the run and labelled as such.
+|Seven tabs, the first five filled from the compiled graph. *Ticket*: the nodes that ran for the last sentence, in order, with their timings and the state keys each one wrote — read from `stream(..., stream_mode="updates")`, so it is what actually happened, not what should have. *Stations*: one card per node — what it does, where it routes, which service it calls, how it fails, where its code lives. *Order pad*: the state after the turn, filled values highlighted. *Floor plan*: the process model. *What happened*: the turn in plain language — the implementation's own account if it offers `what_happened(target)`, otherwise one assembled from the run and labelled as such. *LLM calls*: every prompt the turn sent to an LLM endpoint, with the answer, the response time and the tokens. *Test runs*: the example dialogue played against the loaded implementation, every run kept in `runs/` and compared in a table. A slider sets the pane's width, another the size of the floor plan.
 
 |The picker
 |Every entry of `apps.json` that can be loaded, by title. Switching re-imports the module, so two implementations may share a top-level package name. Entries that cannot be loaded are listed underneath with the reason (`mine (path not found: …)`), which is faster than reading a traceback.
@@ -114,6 +114,16 @@ The recording is as implementation-agnostic as the rest of the pane. `llm_log.Re
 
 In offline mode (`PIZZABOT_OFFLINE=1`) the AI-backed steps run as rules and nothing reaches an endpoint; the tab says so instead of showing an empty list. The log lives in the session and keeps the last 60 turns; *New order* starts a new order number but keeps the log, a reload starts a new one. Streamed answers are recorded with their prompt and timing, but the answer text is not read, so as not to consume the stream the implementation is waiting for.
 
+=== Test runs
+
+The tab *Test runs* plays the example dialogue of `data/test_dialogue.py` — the one `test_pizzabot.py` evaluates through LangSmith — against the implementation behind the counter, and keeps every run for comparison. No LangSmith account, no judge model and no change to the implementation are needed.
+
+*Run the test dialogue on &lt;key&gt;* sends the utterances of the dialogue one after the other into a fresh state of the implementation's own (`new_state()`), beside the conversation at the counter, which stays as it is. The recorded input states of the file are not used: they carry the demo's state keys, which another implementation does not have, while the utterances and the expected answers are what every implementation shares. A turn *passes* when the expected answer is contained in what the bot said in that turn, compared case- and whitespace-insensitively, with placeholders such as `<SOME UUID>` matching anything — the question `test_pizzabot.py` puts to its LLM judge (“does the actual answer contain all of the information in the expected answer?”), asked without a model. The similarity shown beside it (difflib's ratio, 0 to 1) says how far off a failed turn is.
+
+Every run is stored as one JSON file in `runs/` (ignored by git; `PIZZABOT_RUNS` in `.env` moves it, relative to this folder or absolute), named `<started>-<key>.json`: when it ran, the implementation's key, title and module, its git revision when its folder is a checkout (`+` for uncommitted changes), offline mode or the model, and per turn the utterance, the expected and the actual answer, pass or fail, the similarity, the milliseconds, the nodes that ran, the LLM calls and an error if the turn raised. The table under the button compares all stored runs, newest first and across implementations — when, implementation, mode (`offline · rules` or the model name), passed/total, duration, LLM calls, revision — with the run just made highlighted; the picker under it opens the turns of any run.
+
+Two things to know: the last turn of the dialogue places a real order with the Pizza API, exactly as `test_pizzabot.py` does; and the dialogue was written for the demo, so another implementation failing it says that its wording differs, which is precisely what a comparison across implementations is meant to show.
+
 == Architecture
 
 One Streamlit page, a loader, a diagram generator and the demo bot. No build step, no framework, and no server between the page and the graph — the app compiles the graph in-process.
@@ -124,6 +134,7 @@ streamlit_chat.py     the frontend: counter, kitchen view, example board, picker
 app_loader.py         imports an implementation and reads its process model
 diagram.py            draws the process model from a compiled graph
 llm_log.py            records the LLM calls of a turn, for any implementation
+test_runs.py          plays the example dialogue against an implementation, keeps the runs
 settings.py           the only module that reads .env
 shopfront.py          the name over the door, the five styles, the welcome screen
 tutorial.py           the guided tour: steps as data, and the code that runs it
@@ -359,6 +370,7 @@ PIZZABOT_OFFLINE=1        # the rules instead of the LLM
 PIZZA_API_BASE=https://wse-research.org/pizza-api
 QANARY_API_BASE=http://demos.swe.htwk-leipzig.de:40111
 PIZZABOT_APP=demo
+PIZZABOT_RUNS=runs        # where the test runs are kept (optional)
 L3_PATH=/path/to/saint-etienne-exercise-03/student
 ----
 
@@ -384,7 +396,7 @@ Every element sits in a container with a `key`, which Streamlit renders as the c
 |`+pz-style-<where>-<key>+` |one style card, `<where>` being `welcome` or `dialog`
 |`pz-output`, `pz-chat`, `pz-transcript`, `+pz-message-<n>+`, `pz-receipt` |everything the process shows, the conversation column, one message, the receipt
 |`pz-examples`, `+pz-example-<n>+` |the menu board and one entry
-|`pz-kitchen`, `pz-kitchen-width`, `pz-widget-kitchen-width`, `pz-kitchen-tabs`, `pz-tab-ticket`, `pz-tab-stations`, `pz-tab-order-pad`, `pz-tab-floor-plan`, `pz-floor-plan-size`, `pz-tab-what-happened`, `pz-tab-llm-calls` |the kitchen pane, its width control, its tabs and the floor plan's size control
+|`pz-kitchen`, `pz-kitchen-width`, `pz-widget-kitchen-width`, `pz-kitchen-tabs`, `pz-tab-ticket`, `pz-tab-stations`, `pz-tab-order-pad`, `pz-tab-floor-plan`, `pz-floor-plan-size`, `pz-tab-what-happened`, `pz-tab-llm-calls`, `pz-tab-test-runs`, `pz-button-run-tests` |the kitchen pane, its width control, its tabs and the floor plan's size control
 |`pz-footer` |the attribution and the link to this repository
 |`pz-input`, `pz-input-block`, `pz-widget-chat-input`, `pz-main` |Streamlit's fixed bottom bar, its inner block, the chat input, the scrolling page
 |===

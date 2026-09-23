@@ -33,6 +33,7 @@ import app_loader
 import diagram
 import llm_log
 import shopfront
+import test_runs
 import tutorial
 from app_loader import KIND_LABEL, LLM, RULE
 from settings import HERE, settings
@@ -265,6 +266,16 @@ html, body, [class*="css"], .stApp {
 .pz-llm pre { font-family: var(--font-mono); font-size: 0.72rem; white-space: pre-wrap;
               word-break: break-word; margin: 0.1rem 0 0 0; padding: 0.35rem 0.5rem;
               border-radius: 6px; color: var(--char); }
+/* the test runs: a comparison table that scrolls sideways in a narrow pane */
+.pz-runs-frame { overflow-x: auto; margin-bottom: 0.6rem; }
+.pz-runs { width: 100%; border-collapse: collapse; font-family: var(--font-mono);
+           font-size: 0.7rem; white-space: nowrap; }
+.pz-runs th { text-align: left; color: var(--slate); font-weight: 600;
+              border-bottom: 2px solid var(--char); padding: 3px 6px; }
+.pz-runs td { border-bottom: 1px dotted var(--line); padding: 3px 6px; }
+.pz-runs tr.set td { background: var(--cheese); }
+.pz-runs td.all { color: var(--basil); font-weight: 600; }
+.pz-runs td.none { color: var(--tomato); font-weight: 600; }
 .pz-figure { background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
              padding: 0.4rem; margin-bottom: 0.4rem; }
 .pz-figure svg, .pz-figure img { display: block; width: 100%; height: auto; }
@@ -924,8 +935,9 @@ def system_pane():
             kitchen_width_control()
         with st.container(key="pz-kitchen-tabs"):
             (ticket_tab, nodes_tab, state_tab, graph_tab, account_tab,
-             llm_tab) = st.tabs(["Ticket", "Stations", "Order pad", "Floor plan",
-                                 "What happened", "LLM calls"])
+             llm_tab, runs_tab) = st.tabs(["Ticket", "Stations", "Order pad",
+                                           "Floor plan", "What happened",
+                                           "LLM calls", "Test runs"])
 
             with ticket_tab:
                 with st.container(key="pz-tab-ticket"):
@@ -945,6 +957,9 @@ def system_pane():
             with llm_tab:
                 with st.container(key="pz-tab-llm-calls"):
                     render_llm_calls()
+            with runs_tab:
+                with st.container(key="pz-tab-test-runs"):
+                    render_test_runs()
 
 
 def kitchen_width_control():
@@ -1065,6 +1080,111 @@ def llm_call_body(call: dict) -> str:
                     f'<pre>{html.escape(call.get("answer") or "(empty)")}</pre></div>')
     rows.append("</div>")
     return "".join(rows)
+
+
+def render_test_runs():
+    """Play the example dialogue against this implementation, and compare runs.
+
+    The run happens beside the conversation, not in it: it starts from a
+    fresh state of its own, so the order at the counter stays where it is.
+    Every run is a JSON file in `runs/`, and the table compares all of them --
+    across implementations, models and offline mode.
+    """
+    app = current_app()
+    turns = test_runs.dialogue()
+    st.markdown(f'<div class="pz-note">plays <code>{test_runs.DIALOGUE.name}'
+                f'</code> ({len(turns)} turns, the dialogue of '
+                '<code>test_pizzabot.py</code>) against the implementation behind '
+                'the counter — your conversation stays as it is. A turn passes '
+                'when the expected answer is contained in what the bot said.'
+                '</div>', unsafe_allow_html=True)
+    with st.container(key="pz-button-run-tests"):
+        run_now = st.button(
+            f"Run the test dialogue on {app.key}", key="pz-widget-run-tests",
+            help="Sends the utterances of the example dialogue one after the "
+                 "other into a fresh state, grades every answer against the "
+                 "expected one and stores the run in runs/. The last turn "
+                 "places an order with the Pizza API, as test_pizzabot.py does.")
+    if run_now:
+        progress = st.progress(0.0, text="starting…")
+
+        def on_turn(position: int, total: int):
+            progress.progress((position - 1) / total,
+                              text=f"turn {position} of {total}")
+
+        run = test_runs.execute(app, on_turn=on_turn)
+        path = test_runs.save(run)
+        progress.empty()
+        st.session_state.last_run = path.name
+
+    runs = test_runs.history()
+    if not runs:
+        st.markdown('<div class="pz-note">No run stored yet — the button above '
+                    'makes the first one.</div>', unsafe_allow_html=True)
+        return
+
+    st.markdown(f'<div class="pz-note">{len(runs)} run(s) in '
+                f'<code>{settings.runs_dir.name}/</code>, newest first — '
+                'highlighted: the one just made</div>', unsafe_allow_html=True)
+    rows = ['<div class="pz-runs-frame"><table class="pz-runs"><tr>'
+            '<th>when</th><th>implementation</th><th>mode</th><th>passed</th>'
+            '<th>time</th><th>LLM</th><th>rev</th></tr>']
+    for run in runs:
+        fresh = run.get("file") == st.session_state.get("last_run")
+        verdict = "all" if run["passed"] == run["total"] else (
+            "none" if run["passed"] == 0 else "some")
+        rows.append(
+            f'<tr class="{"set" if fresh else ""}">'
+            f'<td>{html.escape(run.get("started", "")[:16].replace("T", " "))}</td>'
+            f'<td title="{html.escape(run.get("title", ""))}">'
+            f'{html.escape(run.get("implementation", ""))}</td>'
+            f'<td>{html.escape(run_mode(run))}</td>'
+            f'<td class="{verdict}">{run["passed"]}/{run["total"]}</td>'
+            f'<td>{run.get("duration_ms", 0) / 1000:.1f}&nbsp;s</td>'
+            f'<td>{run.get("llm_calls", 0)}</td>'
+            f'<td>{html.escape(run.get("revision", "") or "—")}</td></tr>')
+    rows.append("</table></div>")
+    st.markdown("".join(rows), unsafe_allow_html=True)
+
+    def label(index: int) -> str:
+        run = runs[index]
+        return (f'{run.get("started", "")[:16].replace("T", " ")} · '
+                f'{run.get("implementation", "")} · {run_mode(run)} · '
+                f'{run["passed"]}/{run["total"]}')
+
+    chosen = st.selectbox("Turns of the run", range(len(runs)), format_func=label,
+                          key=f"pz-widget-test-run-{runs[0].get('file', '')}")
+    render_run_turns(runs[chosen])
+
+
+def run_mode(run: dict) -> str:
+    """Offline, or the model that answered -- the column that makes runs comparable."""
+    if run.get("mode") == "offline":
+        return "offline · rules"
+    return run.get("model") or "LLM"
+
+
+def render_run_turns(run: dict):
+    """One card per turn: said, expected, answered, and how long it took."""
+    for turn in run.get("turns", []):
+        css = "pz-station ran" if turn["passed"] else "pz-station last"
+        mark = "PASS" if turn["passed"] else "FAIL"
+        chip = "open" if turn["passed"] else "problem"
+        lines = [f'<div class="{css}">',
+                 f'<h4>{turn["turn"]}. <span class="pz-chip {chip}">{mark}</span>'
+                 f'<span class="role">{turn["ms"]} ms · similarity '
+                 f'{turn["similarity"]:.2f} · {turn.get("llm_calls", 0)} LLM '
+                 f'call(s)</span></h4>',
+                 f'<p><b>said</b> {html.escape(turn["input"])}</p>',
+                 f'<p class="keys">expected: {html.escape(turn["expected"])}</p>',
+                 f'<p class="keys">answered: '
+                 f'{html.escape(turn["actual"] or "(nothing)")}</p>']
+        if turn.get("nodes"):
+            lines.append(f'<p class="keys">→ {" → ".join(turn["nodes"])}</p>')
+        if turn.get("error"):
+            lines.append(f'<p class="fail">{html.escape(turn["error"])}</p>')
+        lines.append("</div>")
+        st.markdown("".join(lines), unsafe_allow_html=True)
 
 
 def render_what_happened():

@@ -168,3 +168,6 @@ cython_debug/
 
 # pictures of the process model, drawn on startup from the compiled graph
 assets/generated/
+
+# the stored runs of the example dialogue, one JSON file each (test_runs.py)
+runs/
