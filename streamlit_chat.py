@@ -682,7 +682,8 @@ LLM_LOG_TURNS = 60
 def log_llm_calls(user_input: str, recorder: llm_log.Recorder):
     """Open the log entry of this turn -- the recorder fills it while it runs."""
     log = st.session_state.llm_log
-    log.append({"order": st.session_state.order_no,
+    log.append({"no": log[-1]["no"] + 1 if log else 1,
+                "order": st.session_state.order_no,
                 "turn": st.session_state.turns + 1, "input": user_input,
                 "at": time.strftime("%H:%M:%S"), "offline": settings.offline,
                 "calls": recorder.calls})
@@ -1032,9 +1033,10 @@ def render_llm_calls():
         return (f'order {entry["order"]} · turn {entry["turn"]} · „{said}“ · '
                 f'{len(entry["calls"])} call(s)')
 
-    # the key changes with every new turn, so the newest one is selected
+    # the key changes with every new turn, so the newest one is selected --
+    # the running number, not the length, which stops growing at the cap
     index = st.selectbox("Turn", range(len(newest_first)), format_func=label,
-                         key=f"pz-widget-llm-turn-{len(log)}")
+                         key=f"pz-widget-llm-turn-{log[-1]['no']}")
     entry = newest_first[index]
     if not entry["calls"]:
         reason = ("offline mode: the AI-backed steps ran as rules"
