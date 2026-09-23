@@ -255,12 +255,19 @@ html, body, [class*="css"], .stApp {
 .pz-account code { font-family: var(--font-mono); font-size: 0.76rem; color: var(--crust-d); }
 .pz-figure { background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
              padding: 0.4rem; margin-bottom: 0.4rem; }
-.pz-figure svg { display: block; width: 100%; height: auto; }
+.pz-figure svg, .pz-figure img { display: block; width: 100%; height: auto; }
+/* the floor plan at any size: the canvas is a share of the frame's width,
+   and whatever does not fit scrolls inside the frame, never the page */
+.pz-figure-scroll { overflow: auto; }
+.pz-figure-scroll.zoomed { max-height: 72vh; }
+.pz-figure-canvas { margin: 0 auto; }
 /* the width control sits between the heading and the tabs: one quiet line */
-#pz-kitchen-width [data-testid="stWidgetLabel"] p {
+#pz-kitchen-width [data-testid="stWidgetLabel"] p,
+#pz-floor-plan-size [data-testid="stWidgetLabel"] p {
     font-family: var(--font-mono); font-size: 0.68rem; color: var(--slate);
 }
-#pz-kitchen-width [data-testid="stSlider"] { padding: 0 0.5rem; }
+#pz-kitchen-width [data-testid="stSlider"],
+#pz-floor-plan-size [data-testid="stSlider"] { padding: 0 0.5rem; }
 [data-baseweb="tab-highlight"] { background: var(--tomato) !important; }
 /* five tabs have to fit the narrow pane: let the row wrap instead of
    scrolling behind a chevron */
@@ -524,6 +531,11 @@ def current_app():
 KITCHEN_WIDTHS = [25, 30, 35, 40, 45, 50, 55, 60, 65, 70]
 KITCHEN_WIDTH = 40
 
+# How large the floor plan is drawn, in percent of the pane's width. Above
+# 100 the picture scrolls inside its frame instead of widening the page.
+PLAN_SIZES = [50, 75, 100, 125, 150, 200, 250, 300]
+PLAN_SIZE = 100
+
 
 def init_session():
     if "app_key" not in st.session_state:
@@ -541,6 +553,8 @@ def init_session():
     if "kitchen_width" not in st.session_state:
         st.session_state.kitchen_width = from_query("kitchen", KITCHEN_WIDTHS,
                                                     KITCHEN_WIDTH)
+    if "plan_size" not in st.session_state:
+        st.session_state.plan_size = from_query("plan", PLAN_SIZES, PLAN_SIZE)
 
 
 def from_query(name: str, allowed: list[int], default: int) -> int:
@@ -909,6 +923,21 @@ def kitchen_width_control():
              "so a bookmark opens with the same layout.")
 
 
+def plan_size_control():
+    """How large the floor plan is drawn -- relative to the pane's width."""
+    def changed():
+        st.session_state.plan_size = st.session_state["pz-widget-floor-plan-size"]
+        remember_in_query("plan", st.session_state.plan_size, PLAN_SIZE)
+
+    st.select_slider(
+        "Size of the floor plan", options=PLAN_SIZES,
+        value=st.session_state.plan_size, key="pz-widget-floor-plan-size",
+        format_func=lambda size: f"{size} %", on_change=changed,
+        help="100 % fits the picture to the pane. Larger sizes scroll inside "
+             "the frame (drag the scrollbars, or shift + wheel sideways). "
+             "Kept for the session and in the address bar (`?plan=`).")
+
+
 def render_what_happened():
     """The last turn in words -- from the bot if it can say, else from the run.
 
@@ -1076,13 +1105,23 @@ def render_graph():
         kind, payload = draw(app.key, fingerprint, app.graph, app.title)
     st.markdown('<div class="pz-note">generated from the compiled graph when the '
                 'implementation was loaded</div>', unsafe_allow_html=True)
-    if kind == "png":
-        try:                                    # Streamlit renamed this in 1.5x
-            st.image(payload, width="stretch")
-        except TypeError:
-            st.image(payload, use_container_width=True)
-    elif kind == "svg":
-        st.markdown(f'<div class="pz-figure">{payload}</div>', unsafe_allow_html=True)
+    if kind in ("png", "svg"):
+        with st.container(key="pz-floor-plan-size"):
+            plan_size_control()
+        size = st.session_state.plan_size
+        if kind == "png":
+            # an <img> rather than st.image, so it scales like the SVG does
+            data = base64.b64encode(Path(payload).read_bytes()).decode("ascii")
+            picture = (f'<img src="data:image/png;base64,{data}" '
+                       f'alt="process model of {app.title}">')
+        else:
+            picture = payload
+        # up to 100 % the picture is shown whole; beyond, the frame keeps a
+        # fixed height and scrolls both ways
+        frame = "pz-figure pz-figure-scroll" + (" zoomed" if size > 100 else "")
+        st.markdown(f'<div class="{frame}">'
+                    f'<div class="pz-figure-canvas" style="width:{size}%">'
+                    f'{picture}</div></div>', unsafe_allow_html=True)
     else:
         st.code(payload, language="text")
     with st.expander("mermaid source"):
