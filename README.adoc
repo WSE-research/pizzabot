@@ -106,6 +106,14 @@ The slider *Width of the kitchen view* under the pane's heading sets how much of
 
 The *Floor plan* tab has a slider of its own, *Size of the floor plan*, from 50 % to 300 % of the pane's width. Up to 100 % the picture is shown whole; beyond that it keeps a fixed frame of about three quarters of the screen's height and scrolls inside it, both ways, so a large graph can be read node by node without the page itself growing sideways. SVG and PNG pictures scale alike. Like the width, the size is kept for the session and in the address bar (`?plan=200`).
 
+=== The LLM calls
+
+The tab *LLM calls* lists every request the process sent to an LLM endpoint in this session, one turn at a time: pick the turn (the newest is selected after each sentence), and each call opens as a card with the model, the node that made it, the response time in milliseconds and — when the endpoint reports them — the prompt and answer tokens. Inside the card is the prompt as it went out, message by message with its role (`system`, `user`, `assistant`, …), and the answer that came back, or the error. The line above the picker adds up the calls and the seconds spent waiting for the endpoint.
+
+The recording is as implementation-agnostic as the rest of the pane. `llm_log.Recorder` is handed to the graph as a LangChain callback — `graph.stream(state, config={"callbacks": [recorder]}, ...)` — so every chat model or LLM a node invokes through LangChain is seen by `on_chat_model_start` / `on_llm_start` / `on_llm_end` / `on_llm_error`. Most course implementations, the demo among them, call the endpoint through the `openai` client directly, which no callback ever hears of; for those, `create()` of the client's (chat) completions is wrapped once per process and records into the recorder of the turn that is running, and is a plain pass-through everywhere else. A LangChain model that uses the `openai` client underneath is recorded once, not twice. The node is read from LangGraph's run configuration, so the card says which station asked.
+
+In offline mode (`PIZZABOT_OFFLINE=1`) the AI-backed steps run as rules and nothing reaches an endpoint; the tab says so instead of showing an empty list. The log lives in the session and keeps the last 60 turns; *New order* starts a new order number but keeps the log, a reload starts a new one. Streamed answers are recorded with their prompt and timing, but the answer text is not read, so as not to consume the stream the implementation is waiting for.
+
 == Architecture
 
 One Streamlit page, a loader, a diagram generator and the demo bot. No build step, no framework, and no server between the page and the graph — the app compiles the graph in-process.
@@ -115,6 +123,7 @@ One Streamlit page, a loader, a diagram generator and the demo bot. No build ste
 streamlit_chat.py     the frontend: counter, kitchen view, example board, picker
 app_loader.py         imports an implementation and reads its process model
 diagram.py            draws the process model from a compiled graph
+llm_log.py            records the LLM calls of a turn, for any implementation
 settings.py           the only module that reads .env
 shopfront.py          the name over the door, the five styles, the welcome screen
 tutorial.py           the guided tour: steps as data, and the code that runs it
@@ -375,7 +384,7 @@ Every element sits in a container with a `key`, which Streamlit renders as the c
 |`+pz-style-<where>-<key>+` |one style card, `<where>` being `welcome` or `dialog`
 |`pz-output`, `pz-chat`, `pz-transcript`, `+pz-message-<n>+`, `pz-receipt` |everything the process shows, the conversation column, one message, the receipt
 |`pz-examples`, `+pz-example-<n>+` |the menu board and one entry
-|`pz-kitchen`, `pz-kitchen-width`, `pz-widget-kitchen-width`, `pz-kitchen-tabs`, `pz-tab-ticket`, `pz-tab-stations`, `pz-tab-order-pad`, `pz-tab-floor-plan`, `pz-floor-plan-size`, `pz-tab-what-happened` |the kitchen pane, its width control, its tabs and the floor plan's size control
+|`pz-kitchen`, `pz-kitchen-width`, `pz-widget-kitchen-width`, `pz-kitchen-tabs`, `pz-tab-ticket`, `pz-tab-stations`, `pz-tab-order-pad`, `pz-tab-floor-plan`, `pz-floor-plan-size`, `pz-tab-what-happened`, `pz-tab-llm-calls` |the kitchen pane, its width control, its tabs and the floor plan's size control
 |`pz-footer` |the attribution and the link to this repository
 |`pz-input`, `pz-input-block`, `pz-widget-chat-input`, `pz-main` |Streamlit's fixed bottom bar, its inner block, the chat input, the scrolling page
 |===
