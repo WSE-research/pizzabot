@@ -94,6 +94,14 @@ A style is *data*: a dictionary in `shopfront.py` with a palette, three font sta
 
 Streamlit paints its own widgets from `.streamlit/config.toml`, which is one palette and not five, so inputs, buttons, selects and dialogs are repainted from the same variables. That is what the `!important` block in `STYLE` is for, and it is the only reason the dark styles are readable. The guided tour reads the same variables, so it is dressed in whatever style is on.
 
+== Working in the kitchen view
+
+The pane on the right is where a lecture spends most of its time, so it can be shaped to the room and to the question at hand.
+
+=== Its width
+
+The slider *Width of the kitchen view* under the pane's heading sets how much of the page the pane takes, from 25 % to 70 % in steps of five; the conversation gets the rest. The default, 40 %, is the old fixed 3 : 2 split. Narrow it in front of an audience that should watch the conversation, widen it to read a long prompt. The value is kept for the session and written into the address bar as `?kitchen=55`, so a bookmark or a link handed to a student opens with the same layout; the default is left out of the address.
+
 == Architecture
 
 One Streamlit page, a loader, a diagram generator and the demo bot. No build step, no framework, and no server between the page and the graph — the app compiles the graph in-process.
@@ -363,7 +371,7 @@ Every element sits in a container with a `key`, which Streamlit renders as the c
 |`+pz-style-<where>-<key>+` |one style card, `<where>` being `welcome` or `dialog`
 |`pz-output`, `pz-chat`, `pz-transcript`, `+pz-message-<n>+`, `pz-receipt` |everything the process shows, the conversation column, one message, the receipt
 |`pz-examples`, `+pz-example-<n>+` |the menu board and one entry
-|`pz-kitchen`, `pz-kitchen-tabs`, `pz-tab-ticket`, `pz-tab-stations`, `pz-tab-order-pad`, `pz-tab-floor-plan`, `pz-tab-description` |the kitchen pane and its tabs
+|`pz-kitchen`, `pz-kitchen-width`, `pz-widget-kitchen-width`, `pz-kitchen-tabs`, `pz-tab-ticket`, `pz-tab-stations`, `pz-tab-order-pad`, `pz-tab-floor-plan`, `pz-tab-what-happened` |the kitchen pane, its width control and its tabs
 |`pz-footer` |the attribution and the link to this repository
 |`pz-input`, `pz-input-block`, `pz-widget-chat-input`, `pz-main` |Streamlit's fixed bottom bar, its inner block, the chat input, the scrolling page
 |===
