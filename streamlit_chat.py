@@ -256,6 +256,11 @@ html, body, [class*="css"], .stApp {
 .pz-figure { background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
              padding: 0.4rem; margin-bottom: 0.4rem; }
 .pz-figure svg { display: block; width: 100%; height: auto; }
+/* the width control sits between the heading and the tabs: one quiet line */
+#pz-kitchen-width [data-testid="stWidgetLabel"] p {
+    font-family: var(--font-mono); font-size: 0.68rem; color: var(--slate);
+}
+#pz-kitchen-width [data-testid="stSlider"] { padding: 0 0.5rem; }
 [data-baseweb="tab-highlight"] { background: var(--tomato) !important; }
 /* five tabs have to fit the narrow pane: let the row wrap instead of
    scrolling behind a chevron */
@@ -513,6 +518,12 @@ def current_app():
 # Session state
 # =========================================================================
 
+# How much of the page the kitchen view takes, in percent. 40 is the old
+# fixed 3 : 2 split; the pane gets narrower for an audience and wider for
+# reading a long prompt.
+KITCHEN_WIDTHS = [25, 30, 35, 40, 45, 50, 55, 60, 65, 70]
+KITCHEN_WIDTH = 40
+
 
 def init_session():
     if "app_key" not in st.session_state:
@@ -527,6 +538,26 @@ def init_session():
         st.session_state.serve_from = 0
     if "clearing" not in st.session_state:
         st.session_state.clearing = False
+    if "kitchen_width" not in st.session_state:
+        st.session_state.kitchen_width = from_query("kitchen", KITCHEN_WIDTHS,
+                                                    KITCHEN_WIDTH)
+
+
+def from_query(name: str, allowed: list[int], default: int) -> int:
+    """A view setting out of the address bar -- so a link keeps the layout."""
+    try:
+        value = int(st.query_params.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value in allowed else default
+
+
+def remember_in_query(name: str, value: int, default: int):
+    """Write a view setting into the address bar; the default is left out."""
+    if value == default:
+        st.query_params.pop(name, None)
+    else:
+        st.query_params[name] = str(value)
 
 
 def reset_dialog():
@@ -840,6 +871,8 @@ def system_pane():
                     'In the kitchen</div>', unsafe_allow_html=True)
         st.markdown('<div class="pz-note">what the LangGraph process did with '
                     'your last sentence</div>', unsafe_allow_html=True)
+        with st.container(key="pz-kitchen-width"):
+            kitchen_width_control()
         with st.container(key="pz-kitchen-tabs"):
             ticket_tab, nodes_tab, state_tab, graph_tab, account_tab = st.tabs(
                 ["Ticket", "Stations", "Order pad", "Floor plan", "What happened"])
@@ -859,6 +892,21 @@ def system_pane():
             with account_tab:
                 with st.container(key="pz-tab-what-happened"):
                     render_what_happened()
+
+
+def kitchen_width_control():
+    """How wide the kitchen view is -- the chat column takes the rest."""
+    def changed():
+        st.session_state.kitchen_width = st.session_state["pz-widget-kitchen-width"]
+        remember_in_query("kitchen", st.session_state.kitchen_width, KITCHEN_WIDTH)
+
+    st.select_slider(
+        "Width of the kitchen view", options=KITCHEN_WIDTHS,
+        value=st.session_state.kitchen_width, key="pz-widget-kitchen-width",
+        format_func=lambda share: f"{share} %", on_change=changed,
+        help="How much of the page this pane takes; the conversation gets the "
+             "rest. Kept for the session and in the address bar (`?kitchen=`), "
+             "so a bookmark opens with the same layout.")
 
 
 def render_what_happened():
@@ -1081,7 +1129,9 @@ def create_chat_app():
     # pz-output holds everything the process says, pz-input what is sent to it
     with st.container(key="pz-output"):
         if st.session_state.show_pane:
-            chat_column, system_column = st.columns([3, 2], gap="large")
+            share = st.session_state.kitchen_width
+            chat_column, system_column = st.columns([100 - share, share],
+                                                    gap="large")
         else:
             chat_column, system_column = st.container(key="pz-chat-only"), None
 
