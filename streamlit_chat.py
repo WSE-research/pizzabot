@@ -594,6 +594,8 @@ def from_query(name: str, allowed: list[int], default: int) -> int:
 
 def remember_in_query(name: str, value: int, default: int):
     """Write a view setting into the address bar; the default is left out."""
+    if st.query_params.get(name) == (None if value == default else str(value)):
+        return                                  # already there: no message
     if value == default:
         st.query_params.pop(name, None)
     else:
@@ -966,7 +968,6 @@ def kitchen_width_control():
     """How wide the kitchen view is -- the chat column takes the rest."""
     def changed():
         st.session_state.kitchen_width = st.session_state["pz-widget-kitchen-width"]
-        remember_in_query("kitchen", st.session_state.kitchen_width, KITCHEN_WIDTH)
 
     st.select_slider(
         "Width of the kitchen view", options=KITCHEN_WIDTHS,
@@ -981,7 +982,6 @@ def plan_size_control():
     """How large the floor plan is drawn -- relative to the pane's width."""
     def changed():
         st.session_state.plan_size = st.session_state["pz-widget-floor-plan-size"]
-        remember_in_query("plan", st.session_state.plan_size, PLAN_SIZE)
 
     st.select_slider(
         "Size of the floor plan", options=PLAN_SIZES,
@@ -1400,6 +1400,10 @@ def create_chat_app():
     shopfront.remember()
 
     init_session()
+    # the view settings go into the address bar on every run -- written from
+    # a widget callback, Streamlit does not pass them on to the browser
+    remember_in_query("kitchen", st.session_state.kitchen_width, KITCHEN_WIDTH)
+    remember_in_query("plan", st.session_state.plan_size, PLAN_SIZE)
     # the tour runs itself on the first visit (no cookie) and whenever the
     # Tutorial button was pressed
     tutorial.render(force=st.session_state.pop("tour", False))
