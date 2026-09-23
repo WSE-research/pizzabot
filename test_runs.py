@@ -4,7 +4,7 @@
 This is the local counterpart the frontend offers: no account, no judge, and
 any implementation from `apps.json`.
 
-    run = test_runs.execute(app)      # one run of data/test_dialogue.py
+    run = test_runs.execute(app)      # one run of data/test_dialogue.py, no order
     test_runs.save(run)               # runs/<started>-<key>.json
     test_runs.history()               # every stored run, newest first
 
@@ -22,8 +22,11 @@ placeholders matching anything. That is the judge's question in
 the expected answer?") asked without a model. The similarity next to it is
 difflib's ratio and says how far off a failed turn is.
 
-Mind the side effect: the last turn of the dialogue places an order with the
-Pizza API, exactly as `test_pizzabot.py` does.
+Mind the side effect: the last turn of the dialogue completes the order, and
+a working implementation then places a real one with the Pizza API. So that
+turn is sent only with `execute(app, place_order=True)`; otherwise it is
+recorded as skipped and left out of the verdict. Which turn it is follows
+from the dialogue, not from the implementation -- it is the last one.
 """
 
 from __future__ import annotations
@@ -111,21 +114,32 @@ def _said(app, before: int, state: dict) -> str:
     return app.answer_of(state) or ""
 
 
-def execute(app, on_turn=None) -> dict:
+def execute(app, on_turn=None, place_order: bool = False) -> dict:
     """Play the dialogue against `app` (an app_loader.LoadedApp) and grade it.
 
-    `on_turn(position, total)` is called before each turn, for a progress bar.
-    A turn that raises is recorded as failed, and the run goes on with the
-    state as it was -- one bug should not hide the verdict on the rest.
+    `on_turn(position, total)` is called before each turn that is sent, for a
+    progress bar. A turn that raises is recorded as failed, and the run goes
+    on with the state as it was -- one bug should not hide the verdict on the
+    rest. The last turn, the one that places the order, is sent only when
+    `place_order` is true; otherwise it is recorded as skipped.
     """
     turns = dialogue()
+    sent = len(turns) if place_order else len(turns) - 1
     started_at = datetime.now().astimezone()
     started = time.perf_counter()
     state = app.new_state("")
     results = []
     for position, turn in enumerate(turns, start=1):
+        if position > sent:
+            results.append({
+                "turn": position, "input": turn["input"],
+                "expected": turn["expected"], "actual": "", "passed": False,
+                "skipped": True, "similarity": 0.0, "ms": 0, "nodes": [],
+                "error": "", "llm_calls": 0, "llm_ms": 0,
+            })
+            continue
         if on_turn is not None:
-            on_turn(position, len(turns))
+            on_turn(position, sent)
         state = dict(state)
         state[app.input_key] = turn["input"]
         before = len(app.messages(state))
@@ -148,12 +162,12 @@ def execute(app, on_turn=None) -> dict:
             "expected": turn["expected"], "actual": answer,
             "passed": passed and not error, "similarity": similarity,
             "ms": int((time.perf_counter() - turn_started) * 1000),
-            "nodes": nodes, "error": error,
+            "skipped": False, "nodes": nodes, "error": error,
             "llm_calls": len(recorder.calls),
             "llm_ms": recorder.summary()["ms"],
         })
 
-    passed = sum(1 for result in results if result["passed"])
+    graded = [result for result in results if not result["skipped"]]
     return {
         "started": started_at.isoformat(timespec="seconds"),
         "implementation": app.key,
@@ -163,8 +177,10 @@ def execute(app, on_turn=None) -> dict:
         "mode": "offline" if settings.offline else "llm",
         "model": "" if settings.offline else settings.model_name,
         "dialogue": str(DIALOGUE.relative_to(HERE)),
-        "passed": passed,
-        "total": len(results),
+        "place_order": place_order,
+        "passed": sum(1 for result in graded if result["passed"]),
+        "total": len(graded),
+        "skipped": len(results) - len(graded),
         "duration_ms": int((time.perf_counter() - started) * 1000),
         "llm_calls": sum(result["llm_calls"] for result in results),
         "turns": results,
@@ -215,6 +231,6 @@ def _well_formed(run: Any) -> bool:
             and isinstance(run.get("passed"), int)
             and isinstance(run.get("total"), int)
             and all(isinstance(run.get(key, 0), (int, float))
-                    for key in ("duration_ms", "llm_calls"))
+                    for key in ("duration_ms", "llm_calls", "skipped"))
             and isinstance(run.get("turns"), list)
             and all(isinstance(turn, dict) for turn in run["turns"]))
