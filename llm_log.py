@@ -170,10 +170,8 @@ class Recorder(BaseCallbackHandler):
 _INSTALLED = False
 
 
-def _answer_of(response: Any, streamed: bool) -> tuple[str, str, dict]:
+def _answer_of(response: Any) -> tuple[str, str, dict]:
     """Model, answer text and token counts out of an openai response."""
-    if streamed:
-        return "", "(streamed — not read by the recorder)", {}
     model = str(getattr(response, "model", "") or "")
     texts = []
     for choice in getattr(response, "choices", None) or []:
@@ -233,9 +231,92 @@ def _finish(call: dict, started: float, response: Any = None,
     if error is not None:
         call["error"] = f"{type(error).__name__}: {error}"
         return
-    model, answer, tokens = _answer_of(response, streamed)
+    if streamed:
+        _tap(response, call, started)
+        return
+    model, answer, tokens = _answer_of(response)
     call["model"] = model or call["model"]
     call["answer"], call["tokens"] = answer, tokens
+
+
+# --- a streamed answer: read along with the implementation ----------------
+
+def _tap(stream: Any, call: dict, started: float) -> None:
+    """Record a streamed answer chunk by chunk, as the implementation reads it.
+
+    The openai `Stream` hands out the chunks of its `_iterator`; that iterator
+    is replaced by one that passes every chunk on unchanged and keeps a copy,
+    so nothing is read ahead and the implementation gets the very same stream
+    object. Until its last chunk, `ms` is the time to the first byte.
+    """
+    chunks = getattr(stream, "_iterator", None)
+    if chunks is None:                      # not the Stream we know: leave it
+        call["answer"] = "(streamed — not read by the recorder)"
+        return
+    call["answer"] = "(streamed — not read to the end)"
+    tee = _tee_async if hasattr(chunks, "__anext__") else _tee
+    stream._iterator = tee(chunks, call, started)
+
+
+def _tee(chunks, call: dict, started: float):
+    seen: list = []
+    try:
+        for chunk in chunks:
+            seen.append(chunk)
+            yield chunk
+    except Exception as error:
+        call["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        _safely(_finish_stream, call, started, seen)
+
+
+async def _tee_async(chunks, call: dict, started: float):
+    seen: list = []
+    try:
+        async for chunk in chunks:
+            seen.append(chunk)
+            yield chunk
+    except Exception as error:
+        call["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        _safely(_finish_stream, call, started, seen)
+
+
+def _finish_stream(call: dict, started: float, chunks: list) -> None:
+    """Put the answer together from its chunks -- text and tool calls alike."""
+    call["ms"] = int((time.perf_counter() - started) * 1000)
+    texts: dict[int, str] = {}
+    tools: dict[tuple[int, int], list[str]] = {}        # -> [name, arguments]
+    tokens: dict = {}
+    for chunk in chunks:
+        call["model"] = str(getattr(chunk, "model", "") or "") or call["model"]
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            tokens = {"prompt": getattr(usage, "prompt_tokens", None),
+                      "answer": getattr(usage, "completion_tokens", None)}
+        for choice in getattr(chunk, "choices", None) or []:
+            index = getattr(choice, "index", 0) or 0
+            delta = getattr(choice, "delta", None)
+            text = getattr(delta, "content", None) if delta is not None \
+                else getattr(choice, "text", None)
+            texts[index] = texts.get(index, "") + (text or "")
+            for piece in (getattr(delta, "tool_calls", None) or []):
+                name_args = tools.setdefault((index, getattr(piece, "index", 0) or 0),
+                                             ["", ""])
+                function = getattr(piece, "function", None)
+                name_args[0] += getattr(function, "name", None) or ""
+                name_args[1] += getattr(function, "arguments", None) or ""
+    answers = []
+    for index in sorted(texts.keys() | {choice for choice, _ in tools}):
+        lines = [texts.get(index, "")] + [
+            f"→ tool {name or '?'}({arguments})"
+            for (choice, _), (name, arguments) in sorted(tools.items())
+            if choice == index]
+        answers.append("\n".join(line for line in lines if line))
+    call["answer"] = "\n".join(answers)
+    call["tokens"] = {k: v for k, v in tokens.items() if v is not None}
 
 
 def _wrap(original):
