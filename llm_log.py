@@ -21,6 +21,7 @@ client underneath is recorded once, by its callback, not twice.
 from __future__ import annotations
 
 import functools
+import logging
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -35,6 +36,8 @@ _ACTIVE: ContextVar[Optional["Recorder"]] = ContextVar("pz_llm_recorder",
                                                        default=None)
 
 LANGCHAIN, OPENAI_SDK = "langchain", "openai client"
+
+log = logging.getLogger(__name__)
 
 
 def _node() -> str:
@@ -196,9 +199,12 @@ def _begin(kwargs: dict) -> Optional[dict]:
     if recorder is None or recorder.inside_langchain:
         return None
     if "messages" in kwargs:
+        # the client takes any iterable; reading a generator here would hand
+        # the endpoint an empty one, so it is passed on as a list
+        kwargs["messages"] = list(kwargs["messages"] or [])
         messages = [_message(m.get("role"), m.get("content")) if isinstance(m, dict)
                     else _message(getattr(m, "role", "?"), getattr(m, "content", m))
-                    for m in kwargs.get("messages") or []]
+                    for m in kwargs["messages"]]
     else:
         prompt = kwargs.get("prompt")
         messages = [_message("prompt", p) for p in
@@ -208,6 +214,17 @@ def _begin(kwargs: dict) -> Optional[dict]:
             "tokens": {}, "error": ""}
     recorder.calls.append(call)
     return call
+
+
+def _safely(step, *args, **kwargs):
+    """Run a step of the recording -- a recorder that fails never takes the
+    call down with it, just as `Recorder.raise_error` keeps LangChain's
+    callbacks from doing so."""
+    try:
+        return step(*args, **kwargs)
+    except Exception:                                   # pragma: no cover
+        log.warning("recording an LLM call failed", exc_info=True)
+        return None
 
 
 def _finish(call: dict, started: float, response: Any = None,
@@ -224,16 +241,16 @@ def _finish(call: dict, started: float, response: Any = None,
 def _wrap(original):
     @functools.wraps(original)
     def create(self, *args, **kwargs):
-        call = _begin(kwargs)
+        call = _safely(_begin, kwargs)
         if call is None:
             return original(self, *args, **kwargs)
         started = time.perf_counter()
         try:
             response = original(self, *args, **kwargs)
         except BaseException as error:
-            _finish(call, started, error=error)
+            _safely(_finish, call, started, error=error)
             raise
-        _finish(call, started, response, streamed=bool(kwargs.get("stream")))
+        _safely(_finish, call, started, response, streamed=bool(kwargs.get("stream")))
         return response
     create.__pz_recorded__ = True
     return create
@@ -242,16 +259,16 @@ def _wrap(original):
 def _wrap_async(original):
     @functools.wraps(original)
     async def create(self, *args, **kwargs):
-        call = _begin(kwargs)
+        call = _safely(_begin, kwargs)
         if call is None:
             return await original(self, *args, **kwargs)
         started = time.perf_counter()
         try:
             response = await original(self, *args, **kwargs)
         except BaseException as error:
-            _finish(call, started, error=error)
+            _safely(_finish, call, started, error=error)
             raise
-        _finish(call, started, response, streamed=bool(kwargs.get("stream")))
+        _safely(_finish, call, started, response, streamed=bool(kwargs.get("stream")))
         return response
     create.__pz_recorded__ = True
     return create
