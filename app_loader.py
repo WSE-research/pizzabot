@@ -5,6 +5,7 @@ implementation is a Python module that offers
 
     build_graph()            -> a compiled LangGraph  (required)
     new_state(user_input)    -> the initial state     (optional)
+    what_happened(target)    -> the account of one input (optional)
 
 and nothing else. Which modules exist is data, not code: `apps.json` lists
 them, `.env` supplies the paths. Everything the UI shows -- the nodes, the
@@ -192,6 +193,24 @@ def _guess_kind(function: Callable) -> str:
     return RULE
 
 
+def _sentences(value: Any) -> list[str]:
+    """Whatever an implementation returns, as a list of sentences.
+
+    A string (one sentence per line), a list of strings, or a list of the
+    dictionaries `explain()` produces -- the frontend takes all three.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [line.strip() for line in value.splitlines() if line.strip()]
+    lines = []
+    for item in value:
+        if isinstance(item, dict):
+            item = item.get("sentence") or item.get("text") or item
+        lines.append(str(item).strip())
+    return [line for line in lines if line]
+
+
 def _first_line(text: Optional[str]) -> str:
     if not text:
         return ""
@@ -222,6 +241,8 @@ class LoadedApp:
     state_keys: dict[str, str]
     entry: str
     _new_state: Optional[Callable] = None
+    _explain: Optional[Callable] = None
+    explain_name: str = ""
 
     # --- the contract the UI needs ---------------------------------------
     @property
@@ -273,6 +294,36 @@ class LoadedApp:
     def examples(self) -> list[dict]:
         return list(self.meta.get("examples", []))
 
+    # --- the optional explanation contract --------------------------------
+    @property
+    def target_key(self) -> str:
+        """The state key holding the IRI of the current user input."""
+        return self.meta.get("target_key", "input_iri")
+
+    @property
+    def explains(self) -> bool:
+        """Does this implementation offer an account of its own runs?"""
+        return self._explain is not None
+
+    def explanation(self, state: dict) -> list[str]:
+        """What the implementation says happened to the last input.
+
+        Optional, like `new_state()`. A module may offer
+
+            what_happened(target) -> str | list[str]
+            explain(target)       -> str | list[str] | list[dict]
+
+        where `target` is the IRI of the user's input -- the state key named
+        by `target_key` (`input_iri` unless the sidecar file says otherwise).
+        A bot that has no such key is handed the state instead, so keeping the
+        annotations in the state works too. Nothing here knows a node name: an
+        implementation explains itself, or the frontend reads the run.
+        """
+        if self._explain is None:
+            return []
+        target = state.get(self.target_key)
+        return _sentences(self._explain(target if target else state))
+
 
 def load(key: str) -> LoadedApp:
     """Import the implementation and read its process model."""
@@ -322,10 +373,13 @@ def load(key: str) -> LoadedApp:
     entry = next((target for source, target, _ in _edges(drawn)
                   if source == "__start__"), "")
 
+    explain = _callable(module, "what_happened", "explain", "explanation")
+
     return LoadedApp(
         spec=spec, graph=graph, module=module, meta=meta, nodes=nodes,
         edges=_edges(drawn), state_keys=state_keys, entry=entry,
         _new_state=_find_state_factory(module, spec),
+        _explain=explain, explain_name=getattr(explain, "__name__", ""),
     )
 
 

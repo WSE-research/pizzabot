@@ -246,6 +246,13 @@ html, body, [class*="css"], .stApp {
     background: var(--paper); border: 1px dashed var(--char); border-radius: 8px;
     padding: 0.7rem 0.9rem; font-size: 0.86rem; color: var(--char);
 }
+.pz-account {
+    background: var(--paper); border: 1px dashed var(--char); border-radius: 8px;
+    padding: 0.7rem 0.9rem; font-size: 0.83rem; color: var(--char);
+}
+.pz-account p { margin: 0 0 0.45rem 0; line-height: 1.45; }
+.pz-account p:last-child { margin-bottom: 0; }
+.pz-account code { font-family: var(--font-mono); font-size: 0.76rem; color: var(--crust-d); }
 .pz-figure { background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
              padding: 0.4rem; margin-bottom: 0.4rem; }
 .pz-figure svg { display: block; width: 100%; height: auto; }
@@ -834,8 +841,8 @@ def system_pane():
         st.markdown('<div class="pz-note">what the LangGraph process did with '
                     'your last sentence</div>', unsafe_allow_html=True)
         with st.container(key="pz-kitchen-tabs"):
-            ticket_tab, nodes_tab, state_tab, graph_tab, description_tab = st.tabs(
-                ["Ticket", "Stations", "Order pad", "Floor plan", "Description"])
+            ticket_tab, nodes_tab, state_tab, graph_tab, account_tab = st.tabs(
+                ["Ticket", "Stations", "Order pad", "Floor plan", "What happened"])
 
             with ticket_tab:
                 with st.container(key="pz-tab-ticket"):
@@ -849,16 +856,70 @@ def system_pane():
             with graph_tab:
                 with st.container(key="pz-tab-floor-plan"):
                     render_graph()
-            with description_tab:
-                with st.container(key="pz-tab-description"):
-                    render_description()
+            with account_tab:
+                with st.container(key="pz-tab-what-happened"):
+                    render_what_happened()
 
 
-def render_description():
-    """The natural-language account of the last run -- not built yet."""
-    st.markdown('<div class="pz-description">A description of the last process '
-                'in natural language is not yet available.</div>',
-                unsafe_allow_html=True)
+def render_what_happened():
+    """The last turn in words -- from the bot if it can say, else from the run.
+
+    A bot that keeps a process knowledge graph (one annotation per request to
+    a component: who was asked, what it was given, what it returned, how sure)
+    can verbalize it and offers `what_happened(target)`. One that does not
+    still gets an account here, assembled from the trace this pane already
+    has -- honestly labelled as such, because it is the frontend talking, not
+    the process.
+    """
+    app = current_app()
+    if not st.session_state.trace:
+        st.markdown('<div class="pz-note">No turn yet — say something and this '
+                    'tab will tell you what the process did with it.</div>',
+                    unsafe_allow_html=True)
+        return
+
+    sentences, note = [], ""
+    if app.explains:
+        try:
+            sentences = app.explanation(st.session_state.bot_state)
+            note = (f'explained by the implementation itself — '
+                    f'<code>{app.explain_name}()</code> over its process graph')
+        except Exception as failure:                  # keep the UI alive
+            note = (f'<b>{app.explain_name}()</b> raised '
+                    f'<code>{type(failure).__name__}: {failure}</code>')
+    if not sentences:
+        sentences = account_from_trace(app)
+        note = (note + " — " if note else "") + (
+            'this implementation has no explanation of its own, so the account '
+            'below is read from the run: the stations that ran, in order')
+
+    st.markdown(f'<div class="pz-note">{note}</div>', unsafe_allow_html=True)
+    rows = ['<div class="pz-account">']
+    rows += [f'<p>{sentence}</p>' for sentence in sentences]
+    rows.append("</div>")
+    st.markdown("".join(rows), unsafe_allow_html=True)
+
+
+def account_from_trace(app) -> list[str]:
+    """The fallback account: what the frontend itself watched happen."""
+    said = st.session_state.bot_state.get(app.input_key) or ""
+    lines = [f'You said <i>&ldquo;{said}&rdquo;</i>. '
+             f'{len(st.session_state.trace)} station(s) ran:'] if said else []
+    for position, step in enumerate(st.session_state.trace, start=1):
+        if "error" in step:
+            lines.append(f'<b>{position}.</b> the process stopped with an error: '
+                         f'<code>{step["error"]}</code>')
+            continue
+        info = app.nodes.get(step["node"], {})
+        purpose = (info.get("purpose") or "").rstrip(".")
+        written = (", ".join(f"<code>{key}</code>" for key in step["writes"])
+                   if step["writes"] else "nothing new")
+        lines.append(
+            f'<b>{position}. {step["node"]}</b> '
+            f'({kind_chip(info.get("kind", RULE))}, {step["ms"]}&nbsp;ms)'
+            + (f' — {purpose}' if purpose else "")
+            + f'. It wrote {written} into the order pad.')
+    return lines
 
 
 def kind_chip(kind: str) -> str:

@@ -53,7 +53,7 @@ toc::[]
 |The conversation, and under it a board of example inputs *known to work with the loaded implementation*, filtered by the step the dialog is in — one click sends them, the tooltip says what each demonstrates. Messages are served one at a time, 500 ms apart. *New order* fades the counter out, holds it empty for half a second and lets the bot greet again.
 
 |The kitchen view
-|Five tabs, all filled from the compiled graph. *Ticket*: the nodes that ran for the last sentence, in order, with their timings and the state keys each one wrote — read from `stream(..., stream_mode="updates")`, so it is what actually happened, not what should have. *Stations*: one card per node — what it does, where it routes, which service it calls, how it fails, where its code lives. *Order pad*: the state after the turn, filled values highlighted. *Floor plan*: the process model. *Description*: the process as a sentence.
+|Five tabs, all filled from the compiled graph. *Ticket*: the nodes that ran for the last sentence, in order, with their timings and the state keys each one wrote — read from `stream(..., stream_mode="updates")`, so it is what actually happened, not what should have. *Stations*: one card per node — what it does, where it routes, which service it calls, how it fails, where its code lives. *Order pad*: the state after the turn, filled values highlighted. *Floor plan*: the process model. *What happened*: the turn in plain language — the implementation's own account if it offers `what_happened(target)`, otherwise one assembled from the run and labelled as such.
 
 |The picker
 |Every entry of `apps.json` that can be loaded, by title. Switching re-imports the module, so two implementations may share a top-level package name. Entries that cannot be loaded are listed underneath with the reason (`mine (path not found: …)`), which is faster than reading a traceback.
@@ -131,6 +131,9 @@ def build_graph():                 # required -- returns a COMPILED LangGraph
 
 def new_state(user_input=""):      # optional -- the initial state
     ...
+
+def what_happened(target):         # optional -- the turn in plain language
+    ...
 ----
 
 Everything else is discovered:
@@ -148,6 +151,8 @@ Everything else is discovered:
 |===
 
 `new_state` may also live in the package or in a `state` module beside it, as in the course exercises. When the implementation has none, the frontend builds the initial state from the schema.
+
+`what_happened(target)` is the *What happened* tab. `target` is the IRI of the current user input — the state key named by `target_key` in the sidecar file, `input_iri` by default; a bot without such a key is handed the state instead. It may return one string (one sentence per line), a list of strings, or a list of dictionaries with a `sentence` key. `explain` and `explanation` are accepted as names too. A bot that records a process knowledge graph — one annotation per request to a component, carrying who was asked, what it was given, what it returned and how sure it was — verbalizes that graph here. A bot that does not gets an account assembled from the run instead, with a note saying so: that text is the frontend talking, not the process.
 
 === Registering an implementation
 
