@@ -1112,10 +1112,13 @@ def render_test_runs():
             progress.progress((position - 1) / total,
                               text=f"turn {position} of {total}")
 
-        run = test_runs.execute(app, on_turn=on_turn)
-        path = test_runs.save(run)
+        try:                                    # keep the UI alive
+            run = test_runs.execute(app, on_turn=on_turn)
+            st.session_state.last_run = test_runs.save(run).name
+        except Exception as error:
+            st.error(f"The test run did not complete: {type(error).__name__}: "
+                     f"{error}")
         progress.empty()
-        st.session_state.last_run = path.name
 
     runs = test_runs.history()
     if not runs:
@@ -1124,7 +1127,7 @@ def render_test_runs():
         return
 
     st.markdown(f'<div class="pz-note">{len(runs)} run(s) in '
-                f'<code>{settings.runs_dir.name}/</code>, newest first — '
+                f'<code>{html.escape(settings.runs_dir.name)}/</code>, newest first — '
                 'highlighted: the one just made</div>', unsafe_allow_html=True)
     rows = ['<div class="pz-runs-frame"><table class="pz-runs"><tr>'
             '<th>when</th><th>implementation</th><th>mode</th><th>passed</th>'
@@ -1167,22 +1170,27 @@ def run_mode(run: dict) -> str:
 def render_run_turns(run: dict):
     """One card per turn: said, expected, answered, and how long it took."""
     for turn in run.get("turns", []):
-        css = "pz-station ran" if turn["passed"] else "pz-station last"
-        mark = "PASS" if turn["passed"] else "FAIL"
-        chip = "open" if turn["passed"] else "problem"
+        passed = bool(turn.get("passed"))
+        css = "pz-station ran" if passed else "pz-station last"
+        mark = "PASS" if passed else "FAIL"
+        chip = "open" if passed else "problem"
+        facts = html.escape(f'{turn.get("ms", 0)} ms · similarity '
+                            f'{turn.get("similarity", 0)} · '
+                            f'{turn.get("llm_calls", 0)} LLM call(s)')
         lines = [f'<div class="{css}">',
-                 f'<h4>{turn["turn"]}. <span class="pz-chip {chip}">{mark}</span>'
-                 f'<span class="role">{turn["ms"]} ms · similarity '
-                 f'{turn["similarity"]:.2f} · {turn.get("llm_calls", 0)} LLM '
-                 f'call(s)</span></h4>',
-                 f'<p><b>said</b> {html.escape(turn["input"])}</p>',
-                 f'<p class="keys">expected: {html.escape(turn["expected"])}</p>',
+                 f'<h4>{html.escape(str(turn.get("turn", "?")))}. '
+                 f'<span class="pz-chip {chip}">{mark}</span>'
+                 f'<span class="role">{facts}</span></h4>',
+                 f'<p><b>said</b> {html.escape(str(turn.get("input", "")))}</p>',
+                 f'<p class="keys">expected: '
+                 f'{html.escape(str(turn.get("expected", "")))}</p>',
                  f'<p class="keys">answered: '
-                 f'{html.escape(turn["actual"] or "(nothing)")}</p>']
+                 f'{html.escape(str(turn.get("actual") or "(nothing)"))}</p>']
         if turn.get("nodes"):
-            lines.append(f'<p class="keys">→ {" → ".join(turn["nodes"])}</p>')
+            path = " → ".join(str(node) for node in turn["nodes"])
+            lines.append(f'<p class="keys">→ {html.escape(path)}</p>')
         if turn.get("error"):
-            lines.append(f'<p class="fail">{html.escape(turn["error"])}</p>')
+            lines.append(f'<p class="fail">{html.escape(str(turn["error"]))}</p>')
         lines.append("</div>")
         st.markdown("".join(lines), unsafe_allow_html=True)
 
@@ -1362,7 +1370,7 @@ def render_graph():
             # an <img> rather than st.image, so it scales like the SVG does
             data = base64.b64encode(Path(payload).read_bytes()).decode("ascii")
             picture = (f'<img src="data:image/png;base64,{data}" '
-                       f'alt="process model of {app.title}">')
+                       f'alt="process model of {html.escape(app.title)}">')
         else:
             picture = payload
         # up to 100 % the picture is shown whole; beyond, the frame keeps a

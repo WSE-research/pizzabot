@@ -201,7 +201,20 @@ def history(folder: Optional[Path] = None) -> list[dict]:
             run = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        if isinstance(run, dict) and "turns" in run:
+        if _well_formed(run):
             run["file"] = path.name
             runs.append(run)
     return sorted(runs, key=lambda run: run.get("started", ""), reverse=True)
+
+
+def _well_formed(run: Any) -> bool:
+    """A run the comparison can show -- a file edited by hand, or written by
+    another version of this module, is skipped rather than breaking the tab."""
+    return (isinstance(run, dict)
+            and isinstance(run.get("started", ""), str)
+            and isinstance(run.get("passed"), int)
+            and isinstance(run.get("total"), int)
+            and all(isinstance(run.get(key, 0), (int, float))
+                    for key in ("duration_ms", "llm_calls"))
+            and isinstance(run.get("turns"), list)
+            and all(isinstance(turn, dict) for turn in run["turns"]))
