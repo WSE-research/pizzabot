@@ -69,10 +69,12 @@ STEPS = [
     {
         "target": "#pz-kitchen-tabs",
         "title": "In the kitchen",
-        "text": "The five tabs show what the process did with your last "
+        "text": "The tabs show what the process did with your last "
                 "sentence: the ticket of nodes that ran, a card per node, the "
-                "state after the turn, the generated process model, and a "
-                "description in words.",
+                "state after the turn, the generated process model, an "
+                "account in words and the prompts sent to the LLM — and the "
+                "test runs of the example dialogue. The slider above them "
+                "makes the pane wider or narrower.",
     },
     {
         "target": "#pz-toggle-kitchen-view",
