@@ -21,6 +21,7 @@ or, with the endpoint checks and the offline fallback, ./run_local.sh
 from __future__ import annotations
 
 import base64
+import html
 import time
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 import app_loader
 import diagram
+import llm_log
 import shopfront
 import tutorial
 from app_loader import KIND_LABEL, LLM, RULE
@@ -253,6 +255,16 @@ html, body, [class*="css"], .stApp {
 .pz-account p { margin: 0 0 0.45rem 0; line-height: 1.45; }
 .pz-account p:last-child { margin-bottom: 0; }
 .pz-account code { font-family: var(--font-mono); font-size: 0.76rem; color: var(--crust-d); }
+/* the LLM calls tab: a prompt is a stack of messages, the answer the last */
+.pz-llm { font-size: 0.76rem; }
+.pz-llm .msg { border-left: 4px solid var(--line); padding: 0.1rem 0 0.1rem 0.55rem;
+               margin-bottom: 0.45rem; }
+.pz-llm .msg.answer { border-left-color: var(--basil); }
+.pz-llm .role { font-family: var(--font-mono); font-size: 0.64rem;
+                letter-spacing: 0.12em; text-transform: uppercase; color: var(--slate); }
+.pz-llm pre { font-family: var(--font-mono); font-size: 0.72rem; white-space: pre-wrap;
+              word-break: break-word; margin: 0.1rem 0 0 0; padding: 0.35rem 0.5rem;
+              border-radius: 6px; color: var(--char); }
 .pz-figure { background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
              padding: 0.4rem; margin-bottom: 0.4rem; }
 .pz-figure svg, .pz-figure img { display: block; width: 100%; height: auto; }
@@ -553,6 +565,9 @@ def init_session():
     if "kitchen_width" not in st.session_state:
         st.session_state.kitchen_width = from_query("kitchen", KITCHEN_WIDTHS,
                                                     KITCHEN_WIDTH)
+    if "llm_log" not in st.session_state:
+        # one entry per turn, across orders: the LLM calls tab reads it
+        st.session_state.llm_log = []
     if "plan_size" not in st.session_state:
         st.session_state.plan_size = from_query("plan", PLAN_SIZES, PLAN_SIZE)
 
@@ -582,6 +597,7 @@ def reset_dialog():
     st.session_state.turns = 0
     st.session_state.pending = None
     st.session_state.serve_from = 0
+    st.session_state.order_no = st.session_state.get("order_no", 0) + 1
 
 
 def greeting(app) -> str:
@@ -607,21 +623,26 @@ def run_turn(user_input: str):
 
     final_state = dict(state)
     trace = []
+    # every LLM call of this turn -- through LangChain or the openai client
+    recorder = llm_log.Recorder()
+    log_llm_calls(user_input, recorder)
     started = time.perf_counter()
     try:
         # stream_mode="updates" yields {node_name: state_update} per node,
         # which is exactly what the kitchen pane shows -- for any graph.
-        for chunk in app.graph.stream(state, stream_mode="updates"):
-            now = time.perf_counter()
-            for node_name, update in chunk.items():
-                update = update or {}
-                trace.append({
-                    "node": node_name,
-                    "ms": int((now - started) * 1000),
-                    "writes": [key for key in update if key != app.message_key],
-                })
-                final_state.update(update)
-            started = now
+        with recorder.recording():
+            for chunk in app.graph.stream(state, config={"callbacks": [recorder]},
+                                          stream_mode="updates"):
+                now = time.perf_counter()
+                for node_name, update in chunk.items():
+                    update = update or {}
+                    trace.append({
+                        "node": node_name,
+                        "ms": int((now - started) * 1000),
+                        "writes": [key for key in update if key != app.message_key],
+                    })
+                    final_state.update(update)
+                started = now
     except Exception as error:                      # keep the UI alive
         trace.append({"node": "error", "ms": 0, "writes": [], "error": str(error)})
         st.session_state.trace = trace
@@ -639,6 +660,20 @@ def run_turn(user_input: str):
             AIMessage(content=answer or "(nothing to say — see the ticket)"))
     st.session_state.trace = trace
     st.session_state.turns += 1
+
+
+# the LLM calls tab keeps this many turns; older ones are dropped
+LLM_LOG_TURNS = 60
+
+
+def log_llm_calls(user_input: str, recorder: llm_log.Recorder):
+    """Open the log entry of this turn -- the recorder fills it while it runs."""
+    log = st.session_state.llm_log
+    log.append({"order": st.session_state.order_no,
+                "turn": st.session_state.turns + 1, "input": user_input,
+                "at": time.strftime("%H:%M:%S"), "offline": settings.offline,
+                "calls": recorder.calls})
+    del log[:-LLM_LOG_TURNS]
 
 
 # =========================================================================
@@ -888,8 +923,9 @@ def system_pane():
         with st.container(key="pz-kitchen-width"):
             kitchen_width_control()
         with st.container(key="pz-kitchen-tabs"):
-            ticket_tab, nodes_tab, state_tab, graph_tab, account_tab = st.tabs(
-                ["Ticket", "Stations", "Order pad", "Floor plan", "What happened"])
+            (ticket_tab, nodes_tab, state_tab, graph_tab, account_tab,
+             llm_tab) = st.tabs(["Ticket", "Stations", "Order pad", "Floor plan",
+                                 "What happened", "LLM calls"])
 
             with ticket_tab:
                 with st.container(key="pz-tab-ticket"):
@@ -906,6 +942,9 @@ def system_pane():
             with account_tab:
                 with st.container(key="pz-tab-what-happened"):
                     render_what_happened()
+            with llm_tab:
+                with st.container(key="pz-tab-llm-calls"):
+                    render_llm_calls()
 
 
 def kitchen_width_control():
@@ -936,6 +975,96 @@ def plan_size_control():
         help="100 % fits the picture to the pane. Larger sizes scroll inside "
              "the frame (drag the scrollbars, or shift + wheel sideways). "
              "Kept for the session and in the address bar (`?plan=`).")
+
+
+def render_llm_calls():
+    """The prompts of a turn, as they went to the endpoint, and the answers.
+
+    Recorded by `llm_log` for whatever implementation is loaded -- from the
+    LangChain callbacks the graph is run with, and from the openai client --
+    so nothing here knows which node asks a model or how.
+    """
+    log = st.session_state.llm_log
+    recorded = [entry for entry in log if entry["calls"]]
+    if settings.offline and not recorded:
+        st.markdown('<div class="pz-account"><p><b>Offline mode — no LLM '
+                    'endpoint.</b> With <code>PIZZABOT_OFFLINE=1</code> the '
+                    'AI-backed steps run as rules, so no prompt leaves this '
+                    'process and there is nothing to show here.</p><p>Start '
+                    'with an endpoint in <code>.env</code> (or '
+                    '<code>./run_local.sh --online</code>) to see every prompt, '
+                    'the answer and how long the endpoint took.</p></div>',
+                    unsafe_allow_html=True)
+        return
+    if not log:
+        st.markdown('<div class="pz-note">No turn yet — say something and every '
+                    'prompt the process sends to an LLM will be listed here, with '
+                    'the answer and the response time.</div>',
+                    unsafe_allow_html=True)
+        return
+
+    total = sum(len(entry["calls"]) for entry in log)
+    seconds = sum(call.get("ms", 0) for entry in log for call in entry["calls"]) / 1000
+    st.markdown(f'<div class="pz-note">{total} LLM call(s) in {len(log)} turn(s) '
+                f'of this session, {seconds:.1f}&nbsp;s waiting for the '
+                'endpoint</div>', unsafe_allow_html=True)
+
+    newest_first = list(reversed(log))
+
+    def label(index: int) -> str:
+        entry = newest_first[index]
+        said = entry["input"] if len(entry["input"]) <= 40 else entry["input"][:39] + "…"
+        return (f'order {entry["order"]} · turn {entry["turn"]} · „{said}“ · '
+                f'{len(entry["calls"])} call(s)')
+
+    # the key changes with every new turn, so the newest one is selected
+    index = st.selectbox("Turn", range(len(newest_first)), format_func=label,
+                         key=f"pz-widget-llm-turn-{len(log)}")
+    entry = newest_first[index]
+    if not entry["calls"]:
+        reason = ("offline mode: the AI-backed steps ran as rules"
+                  if entry["offline"] else
+                  "every station that ran in this turn was answered without a model")
+        st.markdown(f'<div class="pz-note">No LLM call in this turn — {reason}.'
+                    '</div>', unsafe_allow_html=True)
+        return
+    for position, call in enumerate(entry["calls"], start=1):
+        with st.expander(llm_call_title(position, call), expanded=position == 1):
+            st.markdown(llm_call_body(call), unsafe_allow_html=True)
+
+
+def llm_call_title(position: int, call: dict) -> str:
+    """One line per call: which model, which node, how long, what went wrong."""
+    parts = [f'{position}. {call.get("model") or "unknown model"}']
+    if call.get("node"):
+        parts.append(f'node {call["node"]}')
+    parts.append(f'{call.get("ms", 0)} ms')
+    if call.get("error"):
+        parts.append("ERROR")
+    return " · ".join(parts)
+
+
+def llm_call_body(call: dict) -> str:
+    """The prompt as a list of messages, then the answer -- all escaped."""
+    tokens = call.get("tokens") or {}
+    facts = [f'via {call.get("source", "?")}']
+    if tokens:
+        facts.append(f'{tokens.get("prompt", "?")} prompt + '
+                     f'{tokens.get("answer", "?")} answer tokens')
+    rows = [f'<div class="pz-note">{" · ".join(facts)}</div>',
+            '<div class="pz-llm">']
+    for message in call.get("messages", []):
+        rows.append(f'<div class="msg"><span class="role">'
+                    f'{html.escape(message.get("role", "?"))}</span>'
+                    f'<pre>{html.escape(message.get("content", ""))}</pre></div>')
+    if call.get("error"):
+        rows.append('<div class="msg answer"><span class="role">error</span>'
+                    f'<pre>{html.escape(call["error"])}</pre></div>')
+    else:
+        rows.append('<div class="msg answer"><span class="role">answer</span>'
+                    f'<pre>{html.escape(call.get("answer") or "(empty)")}</pre></div>')
+    rows.append("</div>")
+    return "".join(rows)
 
 
 def render_what_happened():
