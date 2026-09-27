@@ -73,8 +73,9 @@ STEPS = [
                 "sentence: the ticket of nodes that ran, a card per node, the "
                 "state after the turn, the generated process model, an "
                 "account in words and the prompts sent to the LLM — and the "
-                "test runs of the example dialogue. The slider above them "
-                "makes the pane wider or narrower.",
+                "test runs of the example dialogue. Click the floor plan to "
+                "see it large. The sidebar (» at the top left) makes the pane "
+                "wider or narrower and sets the size of the floor plan.",
     },
     {
         "target": "#pz-toggle-kitchen-view",
