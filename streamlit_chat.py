@@ -31,6 +31,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 import app_loader
 import diagram
+import lightbox
 import llm_log
 import shopfront
 import test_runs
@@ -66,10 +67,41 @@ html, body, [class*="css"], .stApp {
     color: var(--char);
 }
 .stApp { background: var(--dough); }
-/* Streamlit's own toolbar is a fixed bar over the page -- leave room for it,
-   otherwise the first element (the tablecloth band) hides underneath. */
-[data-testid="stHeader"] { background: transparent; height: 2.6rem; }
-.block-container { padding-top: 3.1rem; max-width: 1500px; }
+/* The shop starts at the top edge of the screen. Streamlit's own toolbar is
+   a fixed bar over the page; it is kept, but it no longer reserves a strip:
+   the bar lets clicks through to the page and only its own controls (the
+   sidebar's », the running man, the menu) take them. The Deploy button is
+   for Streamlit Cloud and has nothing to do in a pizzeria. */
+[data-testid="stHeader"] { background: transparent; height: 0; overflow: visible;
+                           pointer-events: none; }
+[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"],
+[data-testid="stHeader"] [data-testid="stStatusWidget"],
+[data-testid="stHeader"] [data-testid="stMainMenu"],
+[data-testid="stHeader"] button { pointer-events: auto; }
+[data-testid="stAppDeployButton"] { display: none; }
+.block-container { padding-top: 0.6rem; max-width: 1500px; }
+/* The style sheets and the script iframes at the top of the page are
+   elements too, each 0 px high but each paid for with the flex gap under
+   it -- seven of them pushed the shop 110 px down. Out of the flow, they
+   still do their work and cost no space. Every `components.html` of this
+   app (the identity, the tour, the lightbox, the cookie) is such a script
+   with height 0; a visible one would need a rule of its own. */
+[data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] style):not(:has(p)),
+[data-testid="stElementContainer"]:has(> iframe[data-testid="stIFrame"][srcdoc]) {
+    position: absolute; width: 0; height: 0; overflow: hidden;
+}
+
+/* --- the sidebar: the view settings ------------------------------------ */
+/* hidden by default (see set_page_config); the » at the top left opens it */
+[data-testid="stSidebar"] { background: var(--paper); border-right: 3px dashed var(--crust); }
+[data-testid="stSidebar"] [data-testid="stSidebarContent"] { background: var(--paper); }
+.pz-sidebar-title {
+    font-family: var(--font-display); color: var(--tomato); font-size: 1.35rem;
+    font-weight: var(--sign-weight); letter-spacing: var(--sign-spacing);
+    text-transform: var(--sign-transform); margin: 0 0 0.2rem 0;
+}
+[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="stSidebarCollapseButton"] button { color: var(--char) !important; }
 
 /* --- the tablecloth band --------------------------------------------- */
 .pz-cloth {
@@ -148,6 +180,21 @@ html, body, [class*="css"], .stApp {
 [data-testid="stChatMessage"]:has([aria-label="Chat message from user"]) {
     border-left-color: var(--basil);
 }
+/* A slip grows with whatever is written on it, however long: the height
+   follows the content, and nothing inside may be wider than the slip --
+   a long URL or id breaks, a code block wraps, a table scrolls in place.
+   Without this, one unbreakable token or a code block pushes the text out
+   of the card instead of making the card taller. */
+[data-testid="stChatMessage"] { height: auto; min-height: min-content; }
+[data-testid="stChatMessageContent"] {
+    flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-wrap: anywhere;
+}
+[data-testid="stChatMessageContent"] pre,
+[data-testid="stChatMessageContent"] pre code {
+    white-space: pre-wrap !important; word-break: break-word;
+}
+[data-testid="stChatMessageContent"] table { display: block; max-width: 100%; overflow-x: auto; }
+[data-testid="stChatMessageContent"] img { max-width: 100%; height: auto; }
 [data-testid="stChatMessage"] > div:first-child {      /* the avatar disc */
     background: var(--cheese) !important; color: var(--char) !important;
 }
@@ -214,10 +261,25 @@ html, body, [class*="css"], .stApp {
 }
 .pz-station.ran  { border-left-color: var(--basil); }
 .pz-station.last { border-left-color: var(--tomato); }
-.pz-station h4 {
+.pz-station h4, .pz-station .head {
     font-family: var(--font-mono); font-size: 0.9rem;
     font-weight: 600; margin: 0 0 0.25rem 0; color: var(--char);
 }
+/* a station card is folded to its heading line; a click opens it. The
+   marker is our own, so it looks the same in every browser and style. */
+details.pz-station { padding: 0.35rem 0.75rem; margin-bottom: 0.35rem; }
+details.pz-station > summary { list-style: none; cursor: pointer; }
+details.pz-station > summary::-webkit-details-marker { display: none; }
+/* a span, not an h4: Streamlit wraps every heading in a block of its own
+   with an anchor link, which would push the name under the marker */
+details.pz-station > summary .head { display: inline; margin: 0; }
+details.pz-station > summary::before {
+    content: "▸"; display: inline-block; width: 1em; color: var(--slate);
+    transition: transform 0.15s;
+}
+details.pz-station[open] > summary::before { transform: rotate(90deg); }
+details.pz-station[open] > summary { margin-bottom: 0.3rem; }
+details.pz-station > summary:hover .head { color: var(--tomato); }
 .pz-station .role { font-family: var(--font-body); font-size: 0.72rem; color: var(--slate); }
 .pz-station p { font-size: 0.8rem; margin: 0.18rem 0; }
 .pz-station .keys {
@@ -266,6 +328,33 @@ html, body, [class*="css"], .stApp {
 .pz-llm pre { font-family: var(--font-mono); font-size: 0.72rem; white-space: pre-wrap;
               word-break: break-word; margin: 0.1rem 0 0 0; padding: 0.35rem 0.5rem;
               border-radius: 6px; color: var(--char); }
+/* one folded item per call: its number and the prompt; a click opens the
+   rest -- the whole message stack, the answer, the model and the timing */
+details.pz-llm-call {
+    background: var(--paper); border: 1px solid var(--line);
+    border-left: 7px solid var(--crust); border-radius: 8px;
+    padding: 0.35rem 0.7rem; margin-bottom: 0.35rem;
+}
+details.pz-llm-call.error { border-left-color: var(--tomato); }
+details.pz-llm-call > summary {
+    list-style: none; cursor: pointer; display: flex; gap: 0.55rem;
+    align-items: baseline;
+}
+details.pz-llm-call > summary::-webkit-details-marker { display: none; }
+details.pz-llm-call > summary .no {
+    flex: 0 0 auto; font-family: var(--font-mono); font-size: 0.78rem;
+    font-weight: 600; color: var(--tomato);
+}
+details.pz-llm-call > summary .prompt {
+    flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); font-size: 0.74rem;
+    color: var(--char); overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden;
+}
+details.pz-llm-call > summary:hover .no { color: var(--tomato-l); }
+details.pz-llm-call[open] > summary {
+    border-bottom: 1px dotted var(--line); padding-bottom: 0.3rem; margin-bottom: 0.35rem;
+}
 /* the test runs: a comparison table that scrolls sideways in a narrow pane */
 .pz-runs-frame { overflow-x: auto; margin-bottom: 0.6rem; }
 .pz-runs { width: 100%; border-collapse: collapse; font-family: var(--font-mono);
@@ -283,14 +372,60 @@ html, body, [class*="css"], .stApp {
    and whatever does not fit scrolls inside the frame, never the page */
 .pz-figure-scroll { overflow: auto; }
 .pz-figure-scroll.zoomed { max-height: 72vh; }
-.pz-figure-canvas { margin: 0 auto; }
-/* the width control sits between the heading and the tabs: one quiet line */
+.pz-figure-canvas { margin: 0 auto; cursor: zoom-in; }
+/* the view settings in the sidebar: quiet labels, like the notes */
 #pz-kitchen-width [data-testid="stWidgetLabel"] p,
 #pz-floor-plan-size [data-testid="stWidgetLabel"] p {
-    font-family: var(--font-mono); font-size: 0.68rem; color: var(--slate);
+    font-family: var(--font-mono); font-size: 0.72rem; color: var(--slate);
 }
 #pz-kitchen-width [data-testid="stSlider"],
 #pz-floor-plan-size [data-testid="stSlider"] { padding: 0 0.5rem; }
+
+/* --- the floor plan, large: the overlay `lightbox.py` opens ------------ */
+/* It lives in the page itself, so these rules reach it. 90 % of the screen;
+   the plan is fitted into the frame, and a click on it switches to the
+   frame's full width (scroll to see the rest) and back. */
+#pz-lightbox {
+    position: fixed; inset: 0; z-index: 1000000;
+    background: rgba(30, 20, 14, 0.55);
+}
+#pz-lightbox .pz-lightbox-frame {
+    position: absolute; left: 5vw; top: 5vh; width: 90vw; height: 90vh;
+    box-sizing: border-box; display: flex; flex-direction: column;
+    background: var(--paper); border: 3px solid var(--char); border-radius: 14px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35); overflow: hidden;
+}
+#pz-lightbox .pz-lightbox-bar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 1rem;
+    padding: 0.35rem 0.5rem 0.35rem 0.9rem; border-bottom: 2px dashed var(--crust);
+    font-family: var(--font-mono); font-size: 0.72rem; color: var(--slate);
+}
+#pz-lightbox .pz-lightbox-bar b {
+    font-family: var(--font-display); font-size: 1.15rem; color: var(--tomato);
+    font-weight: var(--sign-weight); letter-spacing: var(--sign-spacing);
+    text-transform: var(--sign-transform);
+}
+#pz-lightbox .pz-lightbox-bar .hint { flex: 1 1 auto; }
+#pz-lightbox .pz-lightbox-close {
+    border: 2px solid var(--char); background: var(--paper); color: var(--char);
+    border-radius: 999px; width: 2rem; height: 2rem; font-size: 1.1rem;
+    line-height: 1; cursor: pointer;
+}
+#pz-lightbox .pz-lightbox-close:hover { background: var(--cheese); }
+#pz-lightbox .pz-lightbox-stage {
+    flex: 1 1 auto; min-height: 0; padding: 0.6rem; box-sizing: border-box;
+}
+#pz-lightbox .pz-lightbox-stage > * { display: block; margin: 0 auto; }
+/* fit: the whole plan inside the frame, as large as the box allows */
+#pz-lightbox .pz-lightbox-stage.fit { overflow: hidden; cursor: zoom-in; }
+#pz-lightbox .pz-lightbox-stage.fit > svg,
+#pz-lightbox .pz-lightbox-stage.fit > img {
+    width: 100%; height: 100%; object-fit: contain;
+}
+/* wide: as wide as the frame, however tall that makes it */
+#pz-lightbox .pz-lightbox-stage.wide { overflow: auto; cursor: zoom-out; }
+#pz-lightbox .pz-lightbox-stage.wide > svg,
+#pz-lightbox .pz-lightbox-stage.wide > img { width: 100%; height: auto; }
 [data-baseweb="tab-highlight"] { background: var(--tomato) !important; }
 /* five tabs have to fit the narrow pane: let the row wrap instead of
    scrolling behind a chevron */
@@ -548,11 +683,10 @@ def current_app():
 # Session state
 # =========================================================================
 
-# How much of the page the kitchen view takes, in percent. 40 is the old
-# fixed 3 : 2 split; the pane gets narrower for an audience and wider for
-# reading a long prompt.
+# How much of the page the kitchen view takes, in percent. The pane gets
+# narrower for an audience and wider for reading a long prompt.
 KITCHEN_WIDTHS = [25, 30, 35, 40, 45, 50, 55, 60, 65, 70]
-KITCHEN_WIDTH = 40
+KITCHEN_WIDTH = 45
 
 # How large the floor plan is drawn, in percent of the pane's width. Above
 # 100 the picture scrolls inside its frame instead of widening the page.
@@ -682,7 +816,10 @@ LLM_LOG_TURNS = 60
 def log_llm_calls(user_input: str, recorder: llm_log.Recorder):
     """Open the log entry of this turn -- the recorder fills it while it runs."""
     log = st.session_state.llm_log
-    log.append({"no": log[-1]["no"] + 1 if log else 1,
+    # the running number of the turn's first call: the calls of the turn
+    # before are complete by now
+    first = log[-1].get("first", 1) + len(log[-1]["calls"]) if log else 1
+    log.append({"no": log[-1]["no"] + 1 if log else 1, "first": first,
                 "order": st.session_state.order_no,
                 "turn": st.session_state.turns + 1, "input": user_input,
                 "at": time.strftime("%H:%M:%S"), "offline": settings.offline,
@@ -934,8 +1071,6 @@ def system_pane():
                     'In the kitchen</div>', unsafe_allow_html=True)
         st.markdown('<div class="pz-note">what the LangGraph process did with '
                     'your last sentence</div>', unsafe_allow_html=True)
-        with st.container(key="pz-kitchen-width"):
-            kitchen_width_control()
         with st.container(key="pz-kitchen-tabs"):
             (ticket_tab, nodes_tab, state_tab, graph_tab, account_tab,
              llm_tab, runs_tab) = st.tabs(["Ticket", "Stations", "Order pad",
@@ -965,6 +1100,24 @@ def system_pane():
                     render_test_runs()
 
 
+def view_settings():
+    """The sidebar: how the page is laid out, out of the way of the shop.
+
+    It starts folded (`initial_sidebar_state`), so the counter and the
+    kitchen get the whole screen; the » at the top left opens it.
+    """
+    with st.sidebar:
+        with st.container(key="pz-view-settings"):
+            st.markdown('<div class="pz-sidebar-title">View</div>'
+                        '<div class="pz-note">how the page is laid out — kept for '
+                        'the session and in the address bar</div>',
+                        unsafe_allow_html=True)
+            with st.container(key="pz-kitchen-width"):
+                kitchen_width_control()
+            with st.container(key="pz-floor-plan-size"):
+                plan_size_control()
+
+
 def kitchen_width_control():
     """How wide the kitchen view is -- the chat column takes the rest."""
     def changed():
@@ -974,9 +1127,10 @@ def kitchen_width_control():
         "Width of the kitchen view", options=KITCHEN_WIDTHS,
         value=st.session_state.kitchen_width, key="pz-widget-kitchen-width",
         format_func=lambda share: f"{share} %", on_change=changed,
-        help="How much of the page this pane takes; the conversation gets the "
-             "rest. Kept for the session and in the address bar (`?kitchen=`), "
-             "so a bookmark opens with the same layout.")
+        disabled=not st.session_state.show_pane,
+        help="How much of the page the kitchen view takes; the conversation "
+             "gets the rest. Kept for the session and in the address bar "
+             "(`?kitchen=`), so a bookmark opens with the same layout.")
 
 
 def plan_size_control():
@@ -994,7 +1148,10 @@ def plan_size_control():
 
 
 def render_llm_calls():
-    """The prompts of a turn, as they went to the endpoint, and the answers.
+    """Every LLM call of the session, newest first: its number and prompt.
+
+    A click opens a call: the prompt as it went to the endpoint, message by
+    message, the answer, the model, the node and the response time.
 
     Recorded by `llm_log` for whatever implementation is loaded -- from the
     LangChain callbacks the graph is run with, and from the openai client --
@@ -1025,40 +1182,64 @@ def render_llm_calls():
                 f'of this session, {seconds:.1f}&nbsp;s waiting for the '
                 'endpoint</div>', unsafe_allow_html=True)
 
-    newest_first = list(reversed(log))
-
-    def label(index: int) -> str:
-        entry = newest_first[index]
-        said = entry["input"] if len(entry["input"]) <= 40 else entry["input"][:39] + "…"
-        return (f'order {entry["order"]} · turn {entry["turn"]} · „{said}“ · '
-                f'{len(entry["calls"])} call(s)')
-
-    # the key changes with every new turn, so the newest one is selected --
-    # the running number, not the length, which stops growing at the cap
-    index = st.selectbox("Turn", range(len(newest_first)), format_func=label,
-                         key=f"pz-widget-llm-turn-{log[-1]['no']}")
-    entry = newest_first[index]
-    if not entry["calls"]:
-        reason = ("offline mode: the AI-backed steps ran as rules"
-                  if entry["offline"] else
-                  "every station that ran in this turn was answered without a model")
-        st.markdown(f'<div class="pz-note">No LLM call in this turn — {reason}.'
-                    '</div>', unsafe_allow_html=True)
+    if not total:
+        st.markdown('<div class="pz-note">No LLM call yet — every station that ran '
+                    'so far was answered without a model.</div>',
+                    unsafe_allow_html=True)
         return
-    for position, call in enumerate(entry["calls"], start=1):
-        with st.expander(llm_call_title(position, call), expanded=position == 1):
-            st.markdown(llm_call_body(call), unsafe_allow_html=True)
+    # newest first; the number is the call's place in the session, so it
+    # stays the same while newer calls are added above it
+    for entry in reversed(log):
+        first = entry.get("first", 1)
+        for position in reversed(range(len(entry["calls"]))):
+            st.markdown(llm_call_item(first + position, entry,
+                                      entry["calls"][position]),
+                        unsafe_allow_html=True)
 
 
-def llm_call_title(position: int, call: dict) -> str:
-    """One line per call: which model, which node, how long, what went wrong."""
-    parts = [f'{position}. {call.get("model") or "unknown model"}']
+def llm_call_item(number: int, entry: dict, call: dict) -> str:
+    """One folded item: the number and the prompt; the rest when opened."""
+    return (f'<details class="pz-llm-call{" error" if call.get("error") else ""}">'
+            f'<summary><span class="no">#{number}</span>'
+            f'<span class="prompt">{html.escape(prompt_of(call))}</span></summary>'
+            f'<div class="pz-note">{html.escape(llm_call_title(entry, call))}</div>'
+            f'{llm_call_body(call)}</details>')
+
+
+def prompt_of(call: dict) -> str:
+    """What the call asked: its last user message, else its last message.
+
+    On one line -- a prompt template starts with a line break and is indented
+    like the code it sits in; the opened item shows it as it was sent.
+    """
+    messages = call.get("messages") or []
+    asked = [message for message in messages
+             if message.get("role") in ("user", "human")] or messages
+    text = " ".join(str(asked[-1].get("content", "")).split()) if asked else ""
+    return text or "(no prompt recorded)"
+
+
+def llm_call_title(entry: dict, call: dict) -> str:
+    """Where and when the call was made, which model, how long it took."""
+    said = entry["input"] if len(entry["input"]) <= 40 else entry["input"][:39] + "…"
+    parts = [f'order {entry["order"]} · turn {entry["turn"]} „{said}“ · {entry["at"]}',
+             call.get("model") or "unknown model"]
     if call.get("node"):
         parts.append(f'node {call["node"]}')
     parts.append(f'{call.get("ms", 0)} ms')
     if call.get("error"):
         parts.append("ERROR")
     return " · ".join(parts)
+
+
+def verbatim(text) -> str:
+    """Text for a pre-wrapped element inside st.markdown's HTML.
+
+    Escaped, and with its line breaks as `&#10;`: a blank line would end the
+    HTML block for the markdown parser, and the rest of a prompt would be
+    read as markdown -- a `#` line turned into a heading, `*` into italics.
+    """
+    return html.escape(str(text)).replace("\n", "&#10;")
 
 
 def llm_call_body(call: dict) -> str:
@@ -1073,13 +1254,13 @@ def llm_call_body(call: dict) -> str:
     for message in call.get("messages", []):
         rows.append(f'<div class="msg"><span class="role">'
                     f'{html.escape(message.get("role", "?"))}</span>'
-                    f'<pre>{html.escape(message.get("content", ""))}</pre></div>')
+                    f'<pre>{verbatim(message.get("content", ""))}</pre></div>')
     if call.get("error"):
         rows.append('<div class="msg answer"><span class="role">error</span>'
-                    f'<pre>{html.escape(call["error"])}</pre></div>')
+                    f'<pre>{verbatim(call["error"])}</pre></div>')
     else:
         rows.append('<div class="msg answer"><span class="role">answer</span>'
-                    f'<pre>{html.escape(call.get("answer") or "(empty)")}</pre></div>')
+                    f'<pre>{verbatim(call.get("answer") or "(empty)")}</pre></div>')
     rows.append("</div>")
     return "".join(rows)
 
@@ -1324,16 +1505,20 @@ def render_nodes():
     ran = [step["node"] for step in st.session_state.trace]
     last = ran[-1] if ran else None
     st.markdown(f'<div class="pz-note">the {len(app.nodes)} nodes of the compiled '
-                'graph — green: ran in the last turn, red: ran last</div>',
-                unsafe_allow_html=True)
+                'graph — green: ran in the last turn, red: ran last; click a '
+                'station to open its card</div>', unsafe_allow_html=True)
     for name, info in sorted(app.nodes.items(), key=lambda item: item[1]["order"]):
         css = "pz-station"
         if name in ran:
             css += " last" if name == last else " ran"
         kind = info["kind"]
-        lines = [f'<div class="{css}">',
-                 f'<h4>{name} <span class="pz-chip {kind}">{kind_chip(kind)}</span>'
-                 f'<span class="role">{info.get("station", "")}</span></h4>']
+        # folded to the heading line by default: seven open cards push
+        # the rest of the pane off the screen
+        lines = [f'<details class="{css}"><summary>',
+                 f'<span class="head">{name} '
+                 f'<span class="pz-chip {kind}">{kind_chip(kind)}</span>'
+                 f'<span class="role">{info.get("station", "")}</span></span>'
+                 '</summary>']
         if info.get("purpose"):
             lines.append(f'<p>{info["purpose"]}</p>')
         if info.get("routes_to"):
@@ -1344,7 +1529,7 @@ def render_nodes():
             lines.append(f'<p class="fail">{info["failure"]}</p>')
         if info.get("code"):
             lines.append(f'<p class="keys">{info["code"]}</p>')
-        lines.append("</div>")
+        lines.append("</details>")
         st.markdown("".join(lines), unsafe_allow_html=True)
     if settings.offline:
         st.markdown('<div class="pz-note">house recipe: the '
@@ -1386,10 +1571,9 @@ def render_graph():
         draw.clear()
         kind, payload = draw(app.key, fingerprint, app.graph, app.title)
     st.markdown('<div class="pz-note">generated from the compiled graph when the '
-                'implementation was loaded</div>', unsafe_allow_html=True)
+                'implementation was loaded — click it to see it large; the '
+                'size here is set in the sidebar</div>', unsafe_allow_html=True)
     if kind in ("png", "svg"):
-        with st.container(key="pz-floor-plan-size"):
-            plan_size_control()
         size = st.session_state.plan_size
         if kind == "png":
             # an <img> rather than st.image, so it scales like the SVG does
@@ -1420,11 +1604,13 @@ def create_chat_app():
     # is configured -- reading cookies and session state is not an element
     shopfront.init()
     st.set_page_config(page_title=f"{shopfront.name()} · Pizza Bot",
-                       page_icon=shopfront.icon("sign"), layout="wide")
+                       page_icon=shopfront.icon("sign"), layout="wide",
+                       initial_sidebar_state="collapsed")
     st.markdown(shopfront.font_import(), unsafe_allow_html=True)
     st.markdown(shopfront.css(), unsafe_allow_html=True)   # the picked style
     st.markdown(STYLE, unsafe_allow_html=True)             # the rules over it
     install_identity()
+    lightbox.install()
 
     # first visit: ask for the name and the style before anything is loaded
     if shopfront.welcome():
@@ -1450,6 +1636,7 @@ def create_chat_app():
             run_turn(pending)
 
     header()
+    view_settings()
 
     # pz-output holds everything the process says, pz-input what is sent to it
     with st.container(key="pz-output"):
@@ -1471,7 +1658,9 @@ def create_chat_app():
         # no container around this one: it would leave Streamlit's fixed
         # bottom bar (stBottom) and scroll away with the page. The bar itself
         # is given the id `pz-input` by the identity script.
-        user_input = st.chat_input("Type your order…", key="pz-widget-chat-input")
+        user_input = st.chat_input(
+            "How may I help you today? Type your question or your order…",
+            key="pz-widget-chat-input")
         if user_input:
             st.session_state.pending = user_input
             st.rerun()

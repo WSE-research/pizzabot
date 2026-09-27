@@ -53,7 +53,7 @@ toc::[]
 |The conversation, and under it a board of example inputs *known to work with the loaded implementation*, filtered by the step the dialog is in — one click sends them, the tooltip says what each demonstrates. Messages are served one at a time, 500 ms apart. *New order* fades the counter out, holds it empty for half a second and lets the bot greet again.
 
 |The kitchen view
-|Seven tabs, the first five filled from the compiled graph. *Ticket*: the nodes that ran for the last sentence, in order, with their timings and the state keys each one wrote — read from `stream(..., stream_mode="updates")`, so it is what actually happened, not what should have. *Stations*: one card per node — what it does, where it routes, which service it calls, how it fails, where its code lives. *Order pad*: the state after the turn, filled values highlighted. *Floor plan*: the process model. *What happened*: the turn in plain language — the implementation's own account if it offers `what_happened(target)`, otherwise one assembled from the run and labelled as such. *LLM calls*: every prompt the turn sent to an LLM endpoint, with the answer, the response time and the tokens. *Test runs*: the example dialogue played against the loaded implementation, every run kept in `runs/` and compared in a table. A slider sets the pane's width, another the size of the floor plan.
+|Seven tabs, the first five filled from the compiled graph. *Ticket*: the nodes that ran for the last sentence, in order, with their timings and the state keys each one wrote — read from `stream(..., stream_mode="updates")`, so it is what actually happened, not what should have. *Stations*: one card per node, folded to its name and chip until clicked — what it does, where it routes, which service it calls, how it fails, where its code lives. *Order pad*: the state after the turn, filled values highlighted. *Floor plan*: the process model. *What happened*: the turn in plain language — the implementation's own account if it offers `what_happened(target)`, otherwise one assembled from the run and labelled as such. *LLM calls*: every prompt the process sent to an LLM endpoint, as a numbered list; a click on one shows the answer, the model, the response time and the tokens. *Test runs*: the example dialogue played against the loaded implementation, every run kept in `runs/` and compared in a table. Two sliders in the sidebar set the pane's width and the size of the floor plan; a click on the floor plan shows it large.
 
 |The picker
 |Every entry of `apps.json` that can be loaded, by title. Switching re-imports the module, so two implementations may share a top-level package name. Entries that cannot be loaded are listed underneath with the reason (`mine (path not found: …)`), which is faster than reading a traceback.
@@ -96,19 +96,21 @@ Streamlit paints its own widgets from `.streamlit/config.toml`, which is one pal
 
 == Working in the kitchen view
 
-The pane on the right is where a lecture spends most of its time, so it can be shaped to the room and to the question at hand.
+The pane on the right is where a lecture spends most of its time, so it can be shaped to the room and to the question at hand. The two view settings live in the sidebar, which is folded away when the page opens so the shop gets the whole screen; the » at the top left unfolds it.
 
 === Its width
 
-The slider *Width of the kitchen view* under the pane's heading sets how much of the page the pane takes, from 25 % to 70 % in steps of five; the conversation gets the rest. The default, 40 %, is the old fixed 3 : 2 split. Narrow it in front of an audience that should watch the conversation, widen it to read a long prompt. The value is kept for the session and written into the address bar as `?kitchen=55`, so a bookmark or a link handed to a student opens with the same layout; the default is left out of the address.
+The slider *Width of the kitchen view* in the sidebar sets how much of the page the pane takes, from 25 % to 70 % in steps of five; the conversation gets the rest. The default is 45 %. While the kitchen view is switched off, the slider is greyed out. Narrow it in front of an audience that should watch the conversation, widen it to read a long prompt. The value is kept for the session and written into the address bar as `?kitchen=55`, so a bookmark or a link handed to a student opens with the same layout; the default is left out of the address.
 
 === The size of the floor plan
 
-The *Floor plan* tab has a slider of its own, *Size of the floor plan*, from 50 % to 300 % of the pane's width. Up to 100 % the picture is shown whole; beyond that it keeps a fixed frame of about three quarters of the screen's height and scrolls inside it, both ways, so a large graph can be read node by node without the page itself growing sideways. SVG and PNG pictures scale alike. Like the width, the size is kept for the session and in the address bar (`?plan=200`).
+The slider *Size of the floor plan*, also in the sidebar, draws the plan in the *Floor plan* tab at 50 % to 300 % of the pane's width. Up to 100 % the picture is shown whole; beyond that it keeps a fixed frame of about three quarters of the screen's height and scrolls inside it, both ways, so a large graph can be read node by node without the page itself growing sideways. SVG and PNG pictures scale alike. Like the width, the size is kept for the session and in the address bar (`?plan=200`).
+
+A click on the floor plan opens it in an overlay over 90 % of the screen, fitted into the frame so the whole process is in view. A click on the plan there widens it to the frame's full width, so every label can be read — scroll for the rest — and another click fits it back. The ×, Esc or a click beside the frame closes the overlay. It is drawn from the same picture as the tab, so it shows the loaded implementation, whichever that is.
 
 === The LLM calls
 
-The tab *LLM calls* lists every request the process sent to an LLM endpoint in this session, one turn at a time: pick the turn (the newest is selected after each sentence), and each call opens as a card with the model, the node that made it, the response time in milliseconds and — when the endpoint reports them — the prompt and answer tokens. Inside the card is the prompt as it went out, message by message with its role (`system`, `user`, `assistant`, …), and the answer that came back, or the error. The line above the picker adds up the calls and the seconds spent waiting for the endpoint.
+The tab *LLM calls* lists every request the process sent to an LLM endpoint in this session, newest first. Each item shows the call's number — its place in the session, so it stays the same while newer calls arrive above it — and its prompt: the last user message, on up to three lines. A click opens the item: the order, turn and sentence it belongs to, the time, the model, the node that made the call, the response time in milliseconds and — when the endpoint reports them — the prompt and answer tokens; then the prompt as it went out, message by message with its role (`system`, `user`, `assistant`, …), and the answer that came back, or the error. The line above the list adds up the calls and the seconds spent waiting for the endpoint.
 
 The recording is as implementation-agnostic as the rest of the pane. `llm_log.Recorder` is handed to the graph as a LangChain callback — `graph.stream(state, config={"callbacks": [recorder]}, ...)` — so every chat model or LLM a node invokes through LangChain is seen by `on_chat_model_start` / `on_llm_start` / `on_llm_end` / `on_llm_error`. Most course implementations, the demo among them, call the endpoint through the `openai` client directly, which no callback ever hears of; for those, `create()` of the client's (chat) completions is wrapped once per process and records into the recorder of the turn that is running, and is a plain pass-through everywhere else. A LangChain model that uses the `openai` client underneath is recorded once, not twice. The node is read from LangGraph's run configuration, so the card says which station asked.
 
@@ -140,6 +142,7 @@ test_runs.py          plays the example dialogue against an implementation, keep
 settings.py           the only module that reads .env
 shopfront.py          the name over the door, the five styles, the welcome screen
 tutorial.py           the guided tour: steps as data, and the code that runs it
+lightbox.py           the floor plan, large: the overlay a click on it opens
 apps.json             which implementations are offered
 frontend_meta/*.json  per-implementation prose and example inputs (data, not code)
 pizzabot.py           the demo process: state, four nodes, build_graph(), console loop
@@ -398,7 +401,9 @@ Every element sits in a container with a `key`, which Streamlit renders as the c
 |`+pz-style-<where>-<key>+` |one style card, `<where>` being `welcome` or `dialog`
 |`pz-output`, `pz-chat`, `pz-transcript`, `+pz-message-<n>+`, `pz-receipt` |everything the process shows, the conversation column, one message, the receipt
 |`pz-examples`, `+pz-example-<n>+` |the menu board and one entry
-|`pz-kitchen`, `pz-kitchen-width`, `pz-widget-kitchen-width`, `pz-kitchen-tabs`, `pz-tab-ticket`, `pz-tab-stations`, `pz-tab-order-pad`, `pz-tab-floor-plan`, `pz-floor-plan-size`, `pz-tab-what-happened`, `pz-tab-llm-calls`, `pz-tab-test-runs`, `pz-button-run-tests`, `pz-widget-place-order` |the kitchen pane, its width control, its tabs and the floor plan's size control
+|`pz-view-settings`, `pz-kitchen-width`, `pz-widget-kitchen-width`, `pz-floor-plan-size`, `pz-widget-floor-plan-size` |the sidebar's view settings: the width of the kitchen view and the size of the floor plan
+|`pz-kitchen`, `pz-kitchen-tabs`, `pz-tab-ticket`, `pz-tab-stations`, `pz-tab-order-pad`, `pz-tab-floor-plan`, `pz-tab-what-happened`, `pz-tab-llm-calls`, `pz-tab-test-runs`, `pz-button-run-tests`, `pz-widget-place-order` |the kitchen pane and its tabs
+|`pz-lightbox` |the floor plan's overlay, while it is open
 |`pz-footer` |the attribution and the link to this repository
 |`pz-input`, `pz-input-block`, `pz-widget-chat-input`, `pz-main` |Streamlit's fixed bottom bar, its inner block, the chat input, the scrolling page
 |===
