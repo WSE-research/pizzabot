@@ -24,6 +24,7 @@ which is read back through `st.context.cookies` when the session connects.
 
 from __future__ import annotations
 
+import html
 import json
 from urllib.parse import quote, unquote
 
@@ -189,7 +190,7 @@ def _cookie(name: str) -> str:
         raw = st.context.cookies.get(name)
     except Exception:                                   # no context, no cookie
         return ""
-    return unquote(raw) if raw else ""
+    return unquote(raw) if isinstance(raw, str) and raw else ""
 
 
 def init() -> None:
@@ -375,7 +376,7 @@ def welcome() -> bool:
                      "change it later by clicking the sign.")
         chosen_name = (entered or "").strip() or DEFAULT_NAME
         st.markdown('<div class="pz-note">over the door: '
-                    f'<b>{chosen_name}’s Pizza Bot</b></div>',
+                    f'<b>{html.escape(chosen_name)}’s Pizza Bot</b></div>',
                     unsafe_allow_html=True)
 
         st.markdown('<div class="pz-board-title">2 · Pick a style</div>',

@@ -21,7 +21,11 @@ or, with the endpoint checks and the offline fallback, ./run_local.sh
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import html
+import logging
+import secrets
 import time
 from pathlib import Path
 
@@ -39,8 +43,28 @@ import tutorial
 from app_loader import KIND_LABEL, LLM, RULE
 from settings import HERE, settings
 
+logger = logging.getLogger(__name__)
+
 GREETING = ("Hi! I am a pizza bot. I can help you order a pizza. "
             "What would you like to order?")
+
+
+def escaped(value) -> str:
+    """Text safe for insertion into an unsafe_allow_html fragment."""
+    return html.escape(str(value), quote=True)
+
+
+def tokens_match(entered: str, expected: str) -> bool:
+    """Compare secrets without leaking length through hmac.compare_digest."""
+    digest = hashlib.sha256(entered.encode("utf-8")).digest()
+    expected_digest = hashlib.sha256(expected.encode("utf-8")).digest()
+    return hmac.compare_digest(digest, expected_digest)
+
+
+def safe_kind(kind: str) -> str:
+    """A known CSS class for implementation-supplied node metadata."""
+    return kind if kind in (RULE, LLM, "mixed") else RULE
+
 
 # =========================================================================
 # Look -- a pizzeria: a checked tablecloth band, a hand-written sign for the
@@ -665,7 +689,7 @@ def clearing_styles() -> str:
 
 @st.cache_resource(show_spinner="loading the process…")
 def load_app(key: str):
-    """Import the implementation once per session and read its process model."""
+    """Import an implementation once per server process."""
     return app_loader.load(key)
 
 
@@ -694,9 +718,18 @@ PLAN_SIZES = [50, 75, 100, 125, 150, 200, 250, 300]
 PLAN_SIZE = 100
 
 
+def initial_app_key() -> str:
+    """A configured, available app key; otherwise the first safe entry."""
+    specs = app_loader.registry()
+    usable = [spec.key for spec in specs if spec.available[0]]
+    if not usable:
+        raise RuntimeError("no implementation is available")
+    return settings.app_key if settings.app_key in usable else usable[0]
+
+
 def init_session():
     if "app_key" not in st.session_state:
-        st.session_state.app_key = settings.app_key
+        st.session_state.app_key = initial_app_key()
     if "bot_state" not in st.session_state:
         reset_dialog()
     if "show_pane" not in st.session_state:
@@ -713,6 +746,8 @@ def init_session():
     if "llm_log" not in st.session_state:
         # one entry per turn, across orders: the LLM calls tab reads it
         st.session_state.llm_log = []
+    if "llm_calls_used" not in st.session_state:
+        st.session_state.llm_calls_used = 0
     if "plan_size" not in st.session_state:
         st.session_state.plan_size = from_query("plan", PLAN_SIZES, PLAN_SIZE)
 
@@ -763,6 +798,30 @@ def switch_app(key: str):
 
 def run_turn(user_input: str):
     """Send one utterance through whatever graph is loaded."""
+    if len(user_input) > settings.max_input_chars:
+        st.session_state.transcript.append(AIMessage(
+            content=f"That message is too long. Please keep it under "
+                    f"{settings.max_input_chars} characters."))
+        return
+    if st.session_state.turns >= settings.max_turns:
+        st.session_state.transcript.append(AIMessage(
+            content="This session has reached its turn limit. Start a new order "
+                    "or reload the page."))
+        return
+    llm_calls = st.session_state.llm_calls_used
+    if llm_calls >= settings.max_llm_calls:
+        st.session_state.transcript.append(AIMessage(
+            content="This session has reached its LLM-call budget."))
+        return
+    now = time.monotonic()
+    last_started = st.session_state.get("last_turn_started", 0.0)
+    minimum_gap = settings.min_turn_interval_ms / 1_000
+    if minimum_gap and now - last_started < minimum_gap:
+        st.session_state.transcript.append(AIMessage(
+            content="Please wait briefly before sending another message."))
+        return
+    st.session_state.last_turn_started = now
+
     app = current_app()
     state = dict(st.session_state.bot_state)
     state[app.input_key] = user_input
@@ -790,12 +849,18 @@ def run_turn(user_input: str):
                     })
                     final_state.update(update)
                 started = now
-    except Exception as error:                      # keep the UI alive
-        trace.append({"node": "error", "ms": 0, "writes": [], "error": str(error)})
+    except Exception:                               # keep the UI alive
+        reference = secrets.token_hex(4)
+        logger.exception("Graph turn failed [%s]", reference)
+        safe_error = f"Process failed (reference {reference})"
+        trace.append(
+            {"node": "error", "ms": 0, "writes": [], "error": safe_error})
         st.session_state.trace = trace
         st.session_state.transcript.append(
-            AIMessage(content=f"The process raised an error: {error}"))
+            AIMessage(content=f"Something went wrong. Reference: {reference}."))
         return
+    finally:
+        st.session_state.llm_calls_used += len(recorder.calls)
 
     st.session_state.bot_state = final_state
     spoken = app.messages(final_state)[seen:]
@@ -815,6 +880,8 @@ LLM_LOG_TURNS = 60
 
 def log_llm_calls(user_input: str, recorder: llm_log.Recorder):
     """Open the log entry of this turn -- the recorder fills it while it runs."""
+    if not settings.llm_logging_enabled:
+        return
     log = st.session_state.llm_log
     # the running number of the turn's first call: the calls of the turn
     # before are complete by now
@@ -840,14 +907,14 @@ def header():
         with left:
             with st.container(key="pz-brand"):
                 st.markdown(f'<div class="pz-kicker">'
-                            f'{shopfront.current()["tagline"]}</div>',
+                            f'{escaped(shopfront.current()["tagline"])}</div>',
                             unsafe_allow_html=True)
                 # the sign is a button: clicking it renames the pizzeria
                 with st.container(key="pz-button-rename"):
                     if shopfront.sign_button():
                         shopfront.rename_dialog()
-                st.markdown(f'<div class="pz-sub">{app.title} '
-                            f'{shopfront.icon("sign")}</div>',
+                st.markdown(f'<div class="pz-sub">{escaped(app.title)} '
+                            f'{escaped(shopfront.icon("sign"))}</div>',
                             unsafe_allow_html=True)
         with right:
             with st.container(key="pz-controls"):
@@ -950,16 +1017,20 @@ def implementation_picker():
     chosen = st.selectbox(
         "Implementation", keys, index=keys.index(st.session_state.app_key),
         format_func=lambda key: labels[key], key="pz-widget-implementation",
+        disabled=not settings.app_switching_enabled,
         help="Which LangGraph implementation is behind the counter. Switching "
              "reloads the graph and starts a new conversation; the frontend "
-             "itself does not change.")
+             "itself does not change."
+             + ("" if settings.app_switching_enabled
+                else " Switching is disabled for this deployment."))
     if chosen != st.session_state.app_key:
         switch_app(chosen)
         st.rerun()
     missing = [spec for spec in specs if not spec.available[0]]
     if missing:
         st.markdown('<div class="pz-note">not available: '
-                    + " · ".join(f"{spec.key} ({spec.available[1]})"
+                    + " · ".join(f"{escaped(spec.key)} "
+                                 f"({escaped(spec.available[1])})"
                                  for spec in missing) + "</div>",
                     unsafe_allow_html=True)
 
@@ -973,15 +1044,17 @@ def status_line() -> str:
         stage = "waiting for your order"
     else:
         stage = f"turn {st.session_state.turns}"
-    chips = [f'<span class="pz-chip open">OPEN · {stage}</span>']
+    chips = [f'<span class="pz-chip open">OPEN · {escaped(stage)}</span>']
     if settings.offline:
         chips.append('<span class="pz-chip oven">HOUSE RECIPE</span>'
                      '<span class="pz-note inline">no LLM endpoint: the AI-backed '
                      'steps run as rules</span>')
     else:
-        chips.append(f'<span class="pz-chip llm">LLM · {settings.model_name or "unset"}</span>'
+        chips.append(f'<span class="pz-chip llm">LLM · '
+                     f'{escaped(settings.model_name or "unset")}</span>'
                      '<span class="pz-note inline">'
-                     f'{settings.openai_api_base or "no endpoint configured"}</span>')
+                     f'{escaped(settings.openai_api_base or "no endpoint configured")}'
+                     '</span>')
     return "".join(chips)
 
 
@@ -1021,12 +1094,12 @@ def chat_pane():
 
 def receipt():
     state = st.session_state.bot_state
-    rows = [f'<b>— {shopfront.name().upper()} · ORDER RECEIPT '
-            f'{shopfront.icon("receipt")} —</b>']
+    rows = [f'<b>— {escaped(shopfront.name().upper())} · ORDER RECEIPT '
+            f'{escaped(shopfront.icon("receipt"))} —</b>']
     for key in ("slots", "order_id", "customer_address", "pizza_id"):
         value = state.get(key)
         if value:
-            rows.append(f"{key:<10}{value}")
+            rows.append(f"{escaped(key):<10}{escaped(value)}")
     rows.append('<span class="quiet">grazie! press “New order” to start again</span>')
     st.markdown('<div class="pz-receipt">' + "<br>".join(str(row) for row in rows)
                 + "</div>", unsafe_allow_html=True)
@@ -1056,7 +1129,7 @@ def example_buttons():
                         st.session_state.pending = example["text"]
                         st.rerun()
                     st.markdown('<div class="pz-item-note">'
-                                f'{example.get("label", "")}</div>',
+                                f'{escaped(example.get("label", ""))}</div>',
                                 unsafe_allow_html=True)
 
 
@@ -1067,7 +1140,8 @@ def example_buttons():
 
 def system_pane():
     with st.container(key="pz-kitchen"):
-        st.markdown(f'<div class="pz-kitchen">{shopfront.icon("kitchen")} '
+        st.markdown(f'<div class="pz-kitchen">'
+                    f'{escaped(shopfront.icon("kitchen"))} '
                     'In the kitchen</div>', unsafe_allow_html=True)
         st.markdown('<div class="pz-note">what the LangGraph process did with '
                     'your last sentence</div>', unsafe_allow_html=True)
@@ -1157,6 +1231,9 @@ def render_llm_calls():
     LangChain callbacks the graph is run with, and from the openai client --
     so nothing here knows which node asks a model or how.
     """
+    if not settings.llm_logging_enabled:
+        st.info("LLM prompt and answer logging is disabled for this deployment.")
+        return
     log = st.session_state.llm_log
     recorded = [entry for entry in log if entry["calls"]]
     if settings.offline and not recorded:
@@ -1273,6 +1350,9 @@ def render_test_runs():
     Every run is a JSON file in `runs/`, and the table compares all of them --
     across implementations, models and offline mode.
     """
+    if not settings.test_runs_enabled:
+        st.info("Test runs are disabled for this deployment.")
+        return
     app = current_app()
     turns = test_runs.dialogue()
     st.markdown(f'<div class="pz-note">plays <code>{test_runs.DIALOGUE.name}'
@@ -1286,6 +1366,7 @@ def render_test_runs():
         # implementation then places a real one with the Pizza API
         place_order = st.checkbox(
             "Place the real order", value=False, key="pz-widget-place-order",
+            disabled=not settings.orders_enabled,
             help="Also sends the last utterance of the dialogue, which "
                  "completes the order — a working implementation then places "
                  "a real order with the Pizza API, as test_pizzabot.py does. "
@@ -1303,7 +1384,9 @@ def render_test_runs():
                               text=f"turn {position} of {total}")
 
         try:                                    # keep the UI alive
-            run = test_runs.execute(app, on_turn=on_turn, place_order=place_order)
+            run = test_runs.execute(
+                app, on_turn=on_turn,
+                place_order=place_order and settings.orders_enabled)
             st.session_state.last_run = test_runs.save(run).name
         except Exception as error:
             st.error(f"The test run did not complete: {type(error).__name__}: "
@@ -1419,23 +1502,29 @@ def render_what_happened():
         return
 
     sentences, note = [], ""
+    sentences_are_html = False
     if app.explains:
         try:
             sentences = app.explanation(st.session_state.bot_state)
             note = (f'explained by the implementation itself — '
-                    f'<code>{app.explain_name}()</code> over its process graph')
-        except Exception as failure:                  # keep the UI alive
-            note = (f'<b>{app.explain_name}()</b> raised '
-                    f'<code>{type(failure).__name__}: {failure}</code>')
+                    f'<code>{escaped(app.explain_name)}()</code> over its '
+                    'process graph')
+        except Exception:                             # keep the UI alive
+            reference = secrets.token_hex(4)
+            logger.exception("Implementation explanation failed [%s]", reference)
+            note = (f'<b>{escaped(app.explain_name)}()</b> raised '
+                    f'<code>an error (reference {reference})</code>')
     if not sentences:
         sentences = account_from_trace(app)
+        sentences_are_html = True
         note = (note + " — " if note else "") + (
             'this implementation has no explanation of its own, so the account '
             'below is read from the run: the stations that ran, in order')
 
     st.markdown(f'<div class="pz-note">{note}</div>', unsafe_allow_html=True)
     rows = ['<div class="pz-account">']
-    rows += [f'<p>{sentence}</p>' for sentence in sentences]
+    rows += [f'<p>{sentence if sentences_are_html else escaped(sentence)}</p>'
+             for sentence in sentences]
     rows.append("</div>")
     st.markdown("".join(rows), unsafe_allow_html=True)
 
@@ -1443,21 +1532,23 @@ def render_what_happened():
 def account_from_trace(app) -> list[str]:
     """The fallback account: what the frontend itself watched happen."""
     said = st.session_state.bot_state.get(app.input_key) or ""
-    lines = [f'You said <i>&ldquo;{said}&rdquo;</i>. '
+    lines = [f'You said <i>&ldquo;{escaped(said)}&rdquo;</i>. '
              f'{len(st.session_state.trace)} station(s) ran:'] if said else []
     for position, step in enumerate(st.session_state.trace, start=1):
         if "error" in step:
             lines.append(f'<b>{position}.</b> the process stopped with an error: '
-                         f'<code>{step["error"]}</code>')
+                         f'<code>{escaped(step["error"])}</code>')
             continue
         info = app.nodes.get(step["node"], {})
         purpose = (info.get("purpose") or "").rstrip(".")
-        written = (", ".join(f"<code>{key}</code>" for key in step["writes"])
+        written = (", ".join(f"<code>{escaped(key)}</code>"
+                             for key in step["writes"])
                    if step["writes"] else "nothing new")
         lines.append(
-            f'<b>{position}. {step["node"]}</b> '
-            f'({kind_chip(info.get("kind", RULE))}, {step["ms"]}&nbsp;ms)'
-            + (f' — {purpose}' if purpose else "")
+            f'<b>{position}. {escaped(step["node"])}</b> '
+            f'({escaped(kind_chip(info.get("kind", RULE)))}, '
+            f'{step["ms"]}&nbsp;ms)'
+            + (f' — {escaped(purpose)}' if purpose else "")
             + f'. It wrote {written} into the order pad.')
     return lines
 
@@ -1479,21 +1570,22 @@ def render_trace():
     rows = ['<div class="pz-ticket">',
             f'<div class="step"><b>TICKET #{st.session_state.turns}</b> '
             f'<span class="ms">· {len(st.session_state.trace)} node(s) '
-            f'· entry {app.entry}</span></div>']
+            f'· entry {escaped(app.entry)}</span></div>']
     for position, step in enumerate(st.session_state.trace, start=1):
         if "error" in step:
             rows.append('<div class="step"><span class="pz-chip problem">ERROR</span>'
-                        f'{step["error"]}</div>')
+                        f'{escaped(step["error"])}</div>')
             continue
         info = app.nodes.get(step["node"], {})
-        kind = info.get("kind", RULE)
-        writes = ", ".join(step["writes"]) if step["writes"] else None
+        kind = safe_kind(info.get("kind", RULE))
+        writes = (", ".join(escaped(key) for key in step["writes"])
+                  if step["writes"] else None)
         written = (f'<span class="keys">writes {writes}</span>' if writes
                    else '<span class="none">no state change</span>')
         rows.append(
             f'<div class="step"><span class="no">{position}.</span> '
-            f'<b>{step["node"]}</b> '
-            f'<span class="pz-chip {kind}">{kind_chip(kind)}</span>'
+            f'<b>{escaped(step["node"])}</b> '
+            f'<span class="pz-chip {kind}">{escaped(kind_chip(kind))}</span>'
             f'<span class="ms">{step["ms"]} ms</span><br>'
             f'&nbsp;&nbsp;&nbsp;{written}</div>')
     rows.append('</div>')
@@ -1511,24 +1603,31 @@ def render_nodes():
         css = "pz-station"
         if name in ran:
             css += " last" if name == last else " ran"
-        kind = info["kind"]
+        kind = safe_kind(info["kind"])
         # folded to the heading line by default: seven open cards push
         # the rest of the pane off the screen
         lines = [f'<details class="{css}"><summary>',
-                 f'<span class="head">{name} '
-                 f'<span class="pz-chip {kind}">{kind_chip(kind)}</span>'
-                 f'<span class="role">{info.get("station", "")}</span></span>'
-                 '</summary>']
+                 f'<span class="head">{escaped(name)} '
+                 f'<span class="pz-chip {kind}">'
+                 f'{escaped(kind_chip(kind))}</span>'
+                 f'<span class="role">{escaped(info.get("station", ""))}'
+                 '</span></span></summary>']
         if info.get("purpose"):
-            lines.append(f'<p>{info["purpose"]}</p>')
+            lines.append(f'<p>{escaped(info["purpose"])}</p>')
         if info.get("routes_to"):
-            lines.append(f'<p class="keys">→ {", ".join(info["routes_to"])}</p>')
+            lines.append('<p class="keys">→ '
+                         + ", ".join(escaped(route)
+                                     for route in info["routes_to"])
+                         + '</p>')
         if info.get("services"):
-            lines.append('<p class="keys">' + "<br>".join(info["services"]) + "</p>")
+            lines.append('<p class="keys">'
+                         + "<br>".join(escaped(service)
+                                      for service in info["services"])
+                         + "</p>")
         if info.get("failure"):
-            lines.append(f'<p class="fail">{info["failure"]}</p>')
+            lines.append(f'<p class="fail">{escaped(info["failure"])}</p>')
         if info.get("code"):
-            lines.append(f'<p class="keys">{info["code"]}</p>')
+            lines.append(f'<p class="keys">{escaped(info["code"])}</p>')
         lines.append("</details>")
         st.markdown("".join(lines), unsafe_allow_html=True)
     if settings.offline:
@@ -1556,8 +1655,10 @@ def render_state():
             if len(value) > 90:
                 value = value[:87] + "…"
         rows.append(f'<tr class="{"set" if filled else ""}">'
-                    f'<td class="k" title="{description}">{key}</td>'
-                    f'<td class="v {"" if filled else "empty"}">{value}</td></tr>')
+                    f'<td class="k" title="{escaped(description)}">'
+                    f'{escaped(key)}</td>'
+                    f'<td class="v {"" if filled else "empty"}">'
+                    f'{escaped(value)}</td></tr>')
     rows.append("</table>")
     st.markdown("".join(rows), unsafe_allow_html=True)
 
@@ -1578,10 +1679,14 @@ def render_graph():
         if kind == "png":
             # an <img> rather than st.image, so it scales like the SVG does
             data = base64.b64encode(Path(payload).read_bytes()).decode("ascii")
-            picture = (f'<img src="data:image/png;base64,{data}" '
-                       f'alt="process model of {html.escape(app.title)}">')
+            media_type = "image/png"
         else:
-            picture = payload
+            # SVG is also loaded as an image, never injected as active markup.
+            # This keeps implementation-supplied graph data out of the page DOM.
+            data = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+            media_type = "image/svg+xml"
+        picture = (f'<img src="data:{media_type};base64,{data}" '
+                   f'alt="process model of {escaped(app.title)}">')
         # up to 100 % the picture is shown whole; beyond, the frame keeps a
         # fixed height and scrolls both ways
         frame = "pz-figure pz-figure-scroll" + (" zoomed" if size > 100 else "")
@@ -1599,6 +1704,33 @@ def render_graph():
 # =========================================================================
 
 
+def access_granted() -> bool:
+    """Require a deployment token when the app is configured as shared."""
+    if not settings.shared_deployment:
+        return True
+    if not settings.access_token:
+        st.error("Shared deployment is locked: set PIZZABOT_ACCESS_TOKEN.")
+        return False
+    if st.session_state.get("authenticated"):
+        return True
+    failures = st.session_state.get("authentication_failures", 0)
+    if failures >= 5:
+        st.error("Too many failed access attempts in this session.")
+        return False
+    st.title("Pizza Bot")
+    st.caption("This shared deployment requires an access token.")
+    with st.form("pz-access"):
+        entered = st.text_input("Access token", type="password")
+        submitted = st.form_submit_button("Open the shop", type="primary")
+    if submitted:
+        if tokens_match(entered, settings.access_token):
+            st.session_state.authenticated = True
+            st.rerun()
+        st.session_state.authentication_failures = failures + 1
+        st.error("Invalid access token.")
+    return False
+
+
 def create_chat_app():
     # the style decides the page icon, so it has to be known before the page
     # is configured -- reading cookies and session state is not an element
@@ -1609,6 +1741,8 @@ def create_chat_app():
     st.markdown(shopfront.font_import(), unsafe_allow_html=True)
     st.markdown(shopfront.css(), unsafe_allow_html=True)   # the picked style
     st.markdown(STYLE, unsafe_allow_html=True)             # the rules over it
+    if not access_granted():
+        return
     install_identity()
     lightbox.install()
 

@@ -25,7 +25,10 @@ from __future__ import annotations
 import importlib
 import inspect
 import json
+import os
+import re
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -33,6 +36,10 @@ from typing import Any, Callable, Optional
 from settings import HERE, settings
 
 META_DIR = HERE / "frontend_meta"
+KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+MODULE_PATTERN = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_IMPORT_LOCK = threading.RLock()
 
 # What a node does with the outside world, guessed from its own source. A
 # sidecar file may override it; nothing here is implementation-specific.
@@ -60,6 +67,16 @@ class AppSpec:
     meta: str = ""
     note: str = ""
 
+    def __post_init__(self) -> None:
+        if not KEY_PATTERN.fullmatch(self.key):
+            raise ValueError(f"invalid app key: {self.key!r}")
+        if not MODULE_PATTERN.fullmatch(self.module):
+            raise ValueError(f"invalid app module: {self.module!r}")
+        if not isinstance(self.env, dict) or not all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in self.env.items()):
+            raise ValueError(f"{self.key}: env must contain string pairs")
+
     @property
     def root(self) -> Path:
         return Path(settings.expand(self.path or ".")).resolve()
@@ -71,6 +88,8 @@ class AppSpec:
         root = self.root
         if not root.is_dir():
             return False, f"path not found: {root}"
+        if root != HERE and not settings.external_apps_enabled:
+            return False, "external apps are disabled for this deployment"
         return True, ""
 
 
@@ -110,15 +129,26 @@ def _purge(module_name: str) -> None:
 
 
 def _import(spec: AppSpec):
+    """Import one trusted app without leaving path or environment mutations."""
     root = str(spec.root)
-    while root in sys.path:
-        sys.path.remove(root)
-    sys.path.insert(0, root)
-    _purge(spec.module)
-    for name, value in spec.env.items():
-        import os
-        os.environ[name] = settings.expand(value)
-    return importlib.import_module(spec.module)
+    with _IMPORT_LOCK:
+        previous_path = list(sys.path)
+        previous_env = {name: os.environ.get(name) for name in spec.env}
+        try:
+            while root in sys.path:
+                sys.path.remove(root)
+            sys.path.insert(0, root)
+            _purge(spec.module)
+            for name, value in spec.env.items():
+                os.environ[name] = settings.expand(value)
+            return importlib.import_module(spec.module)
+        finally:
+            sys.path[:] = previous_path
+            for name, value in previous_env.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
 
 
 def _state_schema(graph):

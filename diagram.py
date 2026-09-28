@@ -19,13 +19,16 @@ from __future__ import annotations
 
 import hashlib
 import html
+import logging
+import re
 import shutil
 import subprocess
 from functools import lru_cache
-from pathlib import Path
 from typing import Iterable, Optional
 
 from settings import HERE
+
+logger = logging.getLogger(__name__)
 
 GENERATED = HERE / "assets" / "generated"
 
@@ -58,7 +61,7 @@ def fingerprint(nodes: Iterable[str], edges: Iterable[tuple[str, str, bool]]) ->
     payload = "|".join(sorted(nodes)) + "||" + "|".join(
         sorted(f"{source}>{target}:{int(conditional)}"
                for source, target, conditional in edges))
-    return hashlib.sha1(payload.encode()).hexdigest()[:10]
+    return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
 
 def layers(nodes: list[str], edges: list[tuple[str, str, bool]]) -> list[list[str]]:
@@ -192,6 +195,13 @@ def to_text(nodes, edges) -> str:
 # =========================================================================
 
 
+def _dot_quote(value: object) -> str:
+    """A quoted DOT string with no chance to add graph statements."""
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    text = text.replace("\r", "").replace("\n", "\\n")
+    return f'"{text}"'
+
+
 def to_dot(nodes, edges, title: str = "") -> str:
     lines = ["digraph process {",
              '  bgcolor="transparent";',
@@ -200,34 +210,37 @@ def to_dot(nodes, edges, title: str = "") -> str:
              f' color="{INK}", fillcolor="{DOUGH}", penwidth=1.6, margin="0.16,0.08"];',
              f'  edge [fontname="Helvetica", fontsize=9, color="{SLATE}", penwidth=1.3];']
     if title:
-        lines.append(f'  labelloc="t"; label="{title}"; fontname="Helvetica"; fontsize=10;')
+        lines.append(f'  labelloc="t"; label={_dot_quote(title)}; '
+                     'fontname="Helvetica"; fontsize=10;')
     for node in nodes:
         if node == START:
-            lines.append(f'  "{node}" [label="start", shape=circle, width=0.35,'
+            lines.append(f'  {_dot_quote(node)} [label="start", shape=circle, width=0.35,'
                          f' fillcolor="{BASIL}", fontcolor="#FFFFFF", penwidth=0];')
         elif node == END:
-            lines.append(f'  "{node}" [label="end", shape=doublecircle, width=0.3,'
+            lines.append(f'  {_dot_quote(node)} [label="end", shape=doublecircle, width=0.3,'
                          f' fillcolor="{TOMATO}", fontcolor="#FFFFFF", penwidth=0];')
     for source, target, conditional in edges:
         style = ' [style=dashed, label="?"]' if conditional else ""
-        lines.append(f'  "{source}" -> "{target}"{style};')
+        lines.append(f'  {_dot_quote(source)} -> {_dot_quote(target)}{style};')
     lines.append("}")
     return "\n".join(lines)
 
 
 @lru_cache(maxsize=1)
-def graphviz_format() -> Optional[str]:
+def graphviz_format() -> Optional[tuple[str, str]]:
     """Which format this graphviz can write -- often none, when it is half-installed."""
-    if not shutil.which("dot"):
+    executable = shutil.which("dot")
+    if not executable:
         return None
     for candidate in ("svg", "png"):
         try:
-            done = subprocess.run(["dot", f"-T{candidate}"], input=b"digraph{a->b}",
+            done = subprocess.run([executable, f"-T{candidate}"],  # noqa: S603
+                                  input=b"digraph{a->b}",
                                   capture_output=True, timeout=10)
         except (subprocess.SubprocessError, OSError):
             return None
         if done.returncode == 0 and done.stdout:
-            return candidate
+            return executable, candidate
     return None
 
 
@@ -241,8 +254,9 @@ def render(graph, key: str, title: str = "") -> tuple[str, str]:
     nodes, edges = structure(graph)
     digest = fingerprint(nodes, edges)
     GENERATED.mkdir(parents=True, exist_ok=True)
-    svg_file = GENERATED / f"{key}-{digest}.svg"
-    png_file = GENERATED / f"{key}-{digest}.png"
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", str(key))[:80] or "graph"
+    svg_file = GENERATED / f"{safe_key}-{digest}.svg"
+    png_file = GENERATED / f"{safe_key}-{digest}.png"
 
     if svg_file.is_file():
         return "svg", svg_file.read_text()
@@ -251,11 +265,13 @@ def render(graph, key: str, title: str = "") -> tuple[str, str]:
 
     usable = graphviz_format()
     if usable:
+        executable, output_format = usable
         try:
-            done = subprocess.run(["dot", f"-T{usable}", "-Gdpi=140"],
+            done = subprocess.run(  # noqa: S603
+                [executable, f"-T{output_format}", "-Gdpi=140"],
                                   input=to_dot(nodes, edges, title).encode(),
                                   capture_output=True, check=True, timeout=20)
-            if usable == "svg":
+            if output_format == "svg":
                 svg_file.write_bytes(done.stdout)
                 return "svg", done.stdout.decode()
             png_file.write_bytes(done.stdout)
@@ -270,7 +286,7 @@ def render(graph, key: str, title: str = "") -> tuple[str, str]:
         svg_file.write_text(markup)
         return "svg", markup
     except Exception:
-        pass
+        logger.warning("built-in SVG rendering failed", exc_info=True)
 
     try:                                        # needs the network (mermaid.ink)
         png_file.write_bytes(graph.get_graph().draw_mermaid_png())

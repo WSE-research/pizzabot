@@ -373,15 +373,38 @@ OPENAI_API_KEY=           # whatever that endpoint wants
 MODEL_NAME=               # a name from its /models
 PIZZABOT_OFFLINE=1        # the rules instead of the LLM
 PIZZA_API_BASE=https://wse-research.org/pizza-api
-QANARY_API_BASE=http://demos.swe.htwk-leipzig.de:40111
+QANARY_API_BASE=          # HTTPS for a remote service
+QANARY_SPARQL_HOSTS=      # extra hosts Qanary may return for SPARQL
+PIZZABOT_ALLOW_INSECURE_HTTP=0
 PIZZABOT_APP=demo
 PIZZABOT_RUNS=runs        # where the test runs are kept (optional)
 L3_PATH=/path/to/saint-etienne-exercise-03/student
 ----
 
-*`.env-example` names no particular LLM.* It is shipped with the three LLM variables empty and `PIZZABOT_OFFLINE=1`, so `./run_local.sh` on a fresh checkout starts a working bot with no key, no endpoint and no account anywhere. Fill the three in — a hosted service, your institution's server, one on your own machine — and `run_local.sh` probes the endpoint and turns offline mode off by itself. A shell `PIZZABOT_OFFLINE` wins over the file, which is how it reports that probe; for everything else the file wins.
+*`.env-example` names no particular LLM.* It is shipped with the three LLM variables empty and `PIZZABOT_OFFLINE=1`, so `./run_local.sh` on a fresh checkout starts a working bot with no key, no endpoint and no account anywhere. Fill the three in — a hosted service, your institution's server, one on your own machine — and `run_local.sh` probes the endpoint and turns offline mode off by itself. Environment variables win over `.env`, so deployment-level safety settings cannot be weakened by a local file.
 
 `PIZZA_API_BASE` has a built-in default, so even an empty `.env` answers *what pizzas do you have?*. Credentials have no such default: a missing key stays a missing key, and says so.
+
+=== Running on a shared server
+
+The default `PIZZABOT_DEPLOYMENT=local` keeps the lecture features. A server
+that accepts connections from other people must use
+`PIZZABOT_DEPLOYMENT=shared` and set a strong `PIZZABOT_ACCESS_TOKEN`. Shared
+mode requires that token and, unless explicitly enabled, disables real orders,
+test runs, prompt/answer logging, implementation switching and external
+implementation paths. It also applies per-session input, turn, LLM-call and
+timing limits; see `.env-example` for every switch.
+
+External implementations are trusted Python code. Importing one executes it
+with the permissions of the Streamlit process. Shared mode therefore loads
+only this repository by default. Do not enable
+`PIZZABOT_ENABLE_EXTERNAL_APPS` for code you have not reviewed; use a separate
+process or container when students are allowed to supply implementations.
+
+Remote OpenAI-compatible, Qanary and returned SPARQL endpoints must use HTTPS.
+Plain HTTP is accepted automatically only on loopback. The legacy
+`PIZZABOT_ALLOW_INSECURE_HTTP=1` escape hatch must be limited to a protected
+teaching network.
 
 == The process picture
 

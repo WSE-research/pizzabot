@@ -129,15 +129,28 @@ fi
 
 LLM_UP=0
 if [[ -n "${OPENAI_API_BASE:-}" ]]; then
-    LLM_CODE="$(curl -s -o /dev/null -m 6 -w '%{http_code}' \
-        -H "Authorization: Bearer ${OPENAI_API_KEY:-none}" \
-        "${OPENAI_API_BASE%/}/models" 2>/dev/null || true)"
-    if [[ "$LLM_CODE" =~ ^(200|401|403)$ ]]; then
-        LLM_UP=1
-        ok "LLM endpoint answers (HTTP $LLM_CODE) -- ${MODEL_NAME:-no model set}"
+    LLM_URL_SAFE=0
+    if [[ "$OPENAI_API_BASE" == https://* ]] \
+        || [[ "$OPENAI_API_BASE" =~ ^http://localhost([/:]|$) ]] \
+        || [[ "$OPENAI_API_BASE" =~ ^http://127\.0\.0\.1([/:]|$) ]] \
+        || [[ "${PIZZABOT_ALLOW_INSECURE_HTTP:-0}" == "1" ]]; then
+        LLM_URL_SAFE=1
+    fi
+    if [[ $LLM_URL_SAFE -eq 0 ]]; then
+        warn "refusing to send the LLM key over plain HTTP: $OPENAI_API_BASE"
     else
-        warn "LLM endpoint ${OPENAI_API_BASE} unreachable (HTTP $LLM_CODE)"
-        warn "check OPENAI_API_BASE in .env -- a campus endpoint usually needs the university network or a VPN"
+        LLM_CODE="$(curl -s -o /dev/null -m 6 -w '%{http_code}' \
+            -H "Authorization: Bearer ${OPENAI_API_KEY:-none}" \
+            "${OPENAI_API_BASE%/}/models" 2>/dev/null || true)"
+        if [[ "$LLM_CODE" == "200" ]]; then
+            LLM_UP=1
+            ok "LLM endpoint answers (HTTP $LLM_CODE) -- ${MODEL_NAME:-no model set}"
+        elif [[ "$LLM_CODE" =~ ^(401|403)$ ]]; then
+            warn "LLM endpoint rejected the configured credentials (HTTP $LLM_CODE)"
+        else
+            warn "LLM endpoint ${OPENAI_API_BASE} unreachable (HTTP $LLM_CODE)"
+            warn "check OPENAI_API_BASE in .env -- a campus endpoint usually needs the university network or a VPN"
+        fi
     fi
 else
     warn "OPENAI_API_BASE is not set"

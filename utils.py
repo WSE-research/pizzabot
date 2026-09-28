@@ -1,13 +1,15 @@
-import re
-import requests
+import ipaddress
 import json
-from openai import OpenAI
-from fuzzywuzzy import fuzz
-from SPARQLWrapper import SPARQLWrapper, JSON
 import logging
+import re
+from urllib.parse import urlsplit
 
+import requests
+from fuzzywuzzy import fuzz
+from openai import OpenAI
+from SPARQLWrapper import JSON, SPARQLWrapper
 
-
+from settings import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,14 +17,105 @@ logger = logging.getLogger(__name__)
 # One place reads .env: settings.py. Everything here -- endpoints, keys, the
 # model name, the offline switch -- comes from there, so the frontend, the
 # console bot and this module can never disagree about the configuration.
-from settings import settings
-
 pizza_api_base = settings.pizza_api_base
 openai_api_key = settings.openai_api_key
 openai_api_base = settings.openai_api_base
 qanary_api_base = settings.qanary_api_base
 
 _openai = None          # the client, once something has actually needed it
+_openai_config = None
+
+
+def _is_loopback(hostname: str) -> bool:
+    if hostname in ("localhost", "localhost.localdomain") or hostname.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_service_url(
+    value: str,
+    *,
+    label: str,
+    allowed_hosts: tuple[str, ...] = (),
+) -> str:
+    """Validate an outbound service URL before a request leaves the process."""
+    parsed = urlsplit(value)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not hostname:
+        raise ValueError(f"{label} must be an absolute HTTP(S) URL")
+    if parsed.username or parsed.password:
+        raise ValueError(f"{label} must not contain credentials")
+    if parsed.fragment:
+        raise ValueError(f"{label} must not contain a fragment")
+    if parsed.scheme != "https" and not _is_loopback(hostname) \
+            and not settings.allow_insecure_http:
+        raise ValueError(
+            f"{label} must use HTTPS (set PIZZABOT_ALLOW_INSECURE_HTTP=1 "
+            "only for a trusted legacy service)"
+        )
+    normalized_hosts = {host.lower() for host in allowed_hosts}
+    if normalized_hosts and hostname not in normalized_hosts:
+        raise ValueError(f"{label} host {hostname!r} is not allowlisted")
+    return value.rstrip("/")
+
+
+def _validate_graph_iri(value: object) -> str:
+    """Return a SPARQL-safe graph IRI supplied by Qanary."""
+    if not isinstance(value, str) or not value or len(value) > 2_048:
+        raise ValueError("Qanary returned an invalid graph IRI")
+    if any(character.isspace() or character in '<>"{}|\\^`'
+           for character in value):
+        raise ValueError("Qanary graph IRI contains unsafe characters")
+    if urlsplit(value).scheme not in ("http", "https", "urn"):
+        raise ValueError("Qanary graph IRI uses an unsupported scheme")
+    return value
+
+
+def _parse_qanary_result(value: object) -> dict:
+    """Strictly parse and validate the JSON value stored by Qanary."""
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, dict):
+        raise ValueError("Qanary answer is not a JSON object")
+    head = parsed.get("head")
+    results = parsed.get("results")
+    variables = head.get("vars") if isinstance(head, dict) else None
+    bindings = results.get("bindings") if isinstance(results, dict) else None
+    if not isinstance(variables, list) or not all(
+            isinstance(variable, str) for variable in variables):
+        raise ValueError("Qanary answer has invalid variables")
+    if not isinstance(bindings, list) or not all(
+            isinstance(binding, dict) for binding in bindings):
+        raise ValueError("Qanary answer has invalid bindings")
+    return parsed
+
+
+def _json_payload(value: str) -> str:
+    """Strip an optional markdown fence; still only JSON is accepted later."""
+    text = value.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, count=1, flags=re.I)
+        text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
+def _parse_intention(value: object) -> bool:
+    """Parse the model's intent response as strict JSON, never Python code."""
+    if not isinstance(value, str):
+        raise ValueError("intent response is not text")
+    parsed = json.loads(_json_payload(value))
+    if not isinstance(parsed, dict) or set(parsed) != {"intention"} \
+            or not isinstance(parsed["intention"], bool):
+        raise ValueError("intent response must be {'intention': <boolean>}")
+    return parsed["intention"]
+
+
+def pizza_api() -> str:
+    """The live, validated Pizza API base — never a captured import-time URL."""
+    return validate_service_url(
+        settings.pizza_api_base, label="PIZZA_API_BASE")
 
 
 def _client() -> OpenAI:
@@ -33,13 +126,23 @@ def _client() -> OpenAI:
     are the LLM-backed functions below, and each of them checks offline_mode()
     before it gets here.
     """
-    global _openai
-    if _openai is None:
-        if not openai_api_key:
-            raise RuntimeError(
-                "No OPENAI_API_KEY. Copy .env-example to .env and fill it in, "
-                "or set PIZZABOT_OFFLINE=1 to use the rule implementations.")
-        _openai = OpenAI(api_key=openai_api_key, base_url=openai_api_base)
+    global _openai, _openai_config
+    api_key = settings.openai_api_key
+    if not api_key:
+        raise RuntimeError(
+            "No OPENAI_API_KEY. Copy .env-example to .env and fill it in, "
+            "or set PIZZABOT_OFFLINE=1 to use the rule implementations.")
+    api_base = validate_service_url(
+        settings.openai_api_base, label="OPENAI_API_BASE")
+    config = (api_key, api_base)
+    if _openai is None or _openai_config != config:
+        _openai = OpenAI(
+            api_key=api_key,
+            base_url=api_base,
+            timeout=30.0,
+            max_retries=1,
+        )
+        _openai_config = config
     return _openai
 
 # =========================================================================
@@ -62,17 +165,19 @@ def offline_mode() -> bool:
 
 def llm_reachable(timeout: float = 3.0) -> bool:
     """One GET against <OPENAI_API_BASE>/models -- used by run_local.sh."""
-    if not openai_api_base:
+    if not settings.openai_api_base:
         return False
     try:
+        api_base = validate_service_url(
+            settings.openai_api_base, label="OPENAI_API_BASE")
         response = requests.get(
-            f"{openai_api_base.rstrip('/')}/models",
-            headers={"Authorization": f"Bearer {openai_api_key}"},
+            f"{api_base}/models",
+            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
             timeout=timeout,
         )
-        return response.status_code < 500
-    except requests.RequestException as e:
-        logger.info(f"LLM endpoint not reachable: {e}")
+        return response.status_code == 200
+    except (requests.RequestException, ValueError) as error:
+        logger.info("LLM endpoint not reachable: %s", error)
         return False
 
 
@@ -177,12 +282,13 @@ def call_qanary_pipeline(question: str):
         return ""
 
     try:
-        url = f'{qanary_api_base}/startquestionansweringwithtextquestion'
-        
-        logger.info(f"Calling Qanary pipeline at: {url}")
+        base_url = validate_service_url(
+            settings.qanary_api_base, label="QANARY_API_BASE")
+        url = f"{base_url}/startquestionansweringwithtextquestion"
+        logger.info("Calling Qanary pipeline at: %s", url)
 
         headers = {
-            'Origin': qanary_api_base,
+            'Origin': base_url,
             'Referer': url
         }
 
@@ -193,9 +299,20 @@ def call_qanary_pipeline(question: str):
         }
 
         response = requests.post(url, headers=headers, data=data, timeout=60)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Qanary response is not a JSON object")
 
-        uuid = response.json()['inGraph']
-        sparql_endpoint = response.json()['endpoint']
+        graph_iri = _validate_graph_iri(payload.get("inGraph"))
+        qanary_host = (urlsplit(base_url).hostname or "").lower()
+        allowed_hosts = tuple(
+            {qanary_host, *settings.qanary_sparql_hosts})
+        sparql_endpoint = validate_service_url(
+            str(payload.get("endpoint") or ""),
+            label="Qanary SPARQL endpoint",
+            allowed_hosts=allowed_hosts,
+        )
 
         query = f"""
         PREFIX qa: <http://www.wdaqua.eu/qa#>
@@ -203,24 +320,31 @@ def call_qanary_pipeline(question: str):
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 
         SELECT ?value
-        FROM <{uuid}>
+        FROM <{graph_iri}>
         WHERE {{
             ?answerJson a qa:AnswerJson ;
                 rdf:value ?value .
-        }}"""
+        }}"""  # noqa: S608 -- graph_iri is validated above
 
-        result = eval(execute(query, sparql_endpoint)["results"]["bindings"][0]["value"]["value"]) # response format from Virtuoso is weird
+        executed = execute(query, sparql_endpoint)
+        raw_answer = executed["results"]["bindings"][0]["value"]["value"]
+        result = _parse_qanary_result(raw_answer)
 
         rq_vars = result["head"]["vars"]
 
-        context = ""
-
-        for b in result["results"]["bindings"]:
-            context += " ".join([f'{b[var]["value"]}' for var in rq_vars]) + "\n"
-
-        return context
-    except Exception as e:
-        logger.error(str(e))
+        lines = []
+        for binding in result["results"]["bindings"][:100]:
+            values = []
+            for variable in rq_vars:
+                item = binding.get(variable)
+                if isinstance(item, dict) and "value" in item:
+                    values.append(str(item["value"]))
+            if values:
+                lines.append(" ".join(values))
+        return "\n".join(lines)[:50_000]
+    except (KeyError, IndexError, TypeError, ValueError,
+            requests.RequestException) as error:
+        logger.error("Qanary pipeline failed: %s", error)
         return ""
 
 def fetch_pizza_descriptions_from_wikidata() -> dict:
@@ -254,7 +378,7 @@ def rule_check_order_intention(_input) -> bool:
         return True
     try:                                   # "Hawaiian, please" is an order too
         menu = [item["name"].lower() for item in
-                requests.get(f"{pizza_api_base}/pizza", timeout=5).json()]
+                requests.get(f"{pizza_api()}/pizza", timeout=5).json()]
     except (requests.RequestException, ValueError, KeyError):
         menu = list(STATIC_DESCRIPTIONS)
     return any(name in text for name in menu)
@@ -267,10 +391,10 @@ def check_order_intention(_input):
         return intention
 
     example_string_1 = "I wanna order a pizza."
-    assistant_docstring_1 = """{"intention": True}"""
+    assistant_docstring_1 = """{"intention": true}"""
 
     example_string_2 = "How are you doing today?"
-    assistant_docstring_2 = """{"intention": False}"""
+    assistant_docstring_2 = """{"intention": false}"""
 
     chat_response = _client().chat.completions.create(
         model=settings.model_name,
@@ -287,8 +411,11 @@ Below is a text for you to analyze."""},
     )
 
     received_message = chat_response.choices[0].message.content
-    logger.info(received_message)
-    return eval(received_message)["intention"]
+    try:
+        return _parse_intention(received_message)
+    except (json.JSONDecodeError, ValueError) as error:
+        logger.warning("Could not read intent from model response: %s", error)
+        return False
 
 
 def rule_extract_address(_input):
@@ -327,20 +454,21 @@ def validate_address(city, street, house_number):
     payload = {"city": city, "street": street, "house_number": house_number}
     try:
         response = requests.post(
-            f"{pizza_api_base}/address/validate", json=payload, timeout=5)
+            f"{pizza_api()}/address/validate", json=payload, timeout=5)
     except requests.RequestException as e:
         logger.error(f"Pizza API not reachable: {e}")
         return None
     if response.status_code != 200:
         return None
-    logger.info("Potential Address found: " + str((city, street, house_number)))
+    logger.info("Address accepted by the Pizza API")
     return (city, street, house_number)
 
 
 def check_customer_address(_input):
     if offline_mode():
         parsed = rule_extract_address(_input)
-        logger.info(f"{parsed}  (rule)")
+        logger.info("Address parsed by the offline rule: %s",
+                    "yes" if parsed else "no")
         if parsed is None:
             return None
         return validate_address(*parsed)
@@ -360,7 +488,6 @@ Below is a text for you to analyze."""},
     )
 
     received_message = chat_response.choices[0].message.content
-    logger.info(received_message)
 
     try:                       # a model may answer with anything at all
         response_dictionary = {}
@@ -379,14 +506,15 @@ Below is a text for you to analyze."""},
 
 
 def get_pizza_menu():
-    response = requests.get(f"{pizza_api_base}/pizza", timeout=5)
+    response = requests.get(f"{pizza_api()}/pizza", timeout=5)
+    response.raise_for_status()
     return ", ".join([item["name"] for item in response.json()])
 
 
 def get_delivery_area() -> str:
     """The sentence the bot uses when an address is rejected."""
     try:
-        cities = requests.get(f"{pizza_api_base}/city", timeout=5)
+        cities = requests.get(f"{pizza_api()}/city", timeout=5)
         total = cities.headers.get("X-Total-Count")
         if total and int(total) > 20:
             places = f"{int(total):,}".replace(",", " ")
@@ -399,7 +527,8 @@ def get_delivery_area() -> str:
 
 def validate_pizza_name(_input):
     threshold = 80
-    response = requests.get(f"{pizza_api_base}/pizza", timeout=5)
+    response = requests.get(f"{pizza_api()}/pizza", timeout=5)
+    response.raise_for_status()
     menu = response.json()
     for item in menu:
         current_ratio = fuzz.partial_ratio(_input, list(item.values())[1])
@@ -413,7 +542,7 @@ def post_order(pizza_id, address):
     city, street, house_number = address
     post = {"pizza_id": pizza_id, "city": city,
             "street": street, "house_number": house_number}
-    response = requests.post(f"{pizza_api_base}/order", json=post, timeout=5)
+    response = requests.post(f"{pizza_api()}/order", json=post, timeout=5)
 
     if response.status_code != 200:
         return None
@@ -429,9 +558,9 @@ def post_order(pizza_id, address):
 
 def get_order(order_id):
     response = requests.get(
-        f"{pizza_api_base}/address/validate/" + order_id, timeout=5)
-    order = response.json()
-    # TODO return order information if asked
+        f"{pizza_api()}/address/validate/" + order_id, timeout=5)
+    response.raise_for_status()
+    return response.json()
 
 
 class BasicFunctions:
