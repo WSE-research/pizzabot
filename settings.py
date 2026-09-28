@@ -21,9 +21,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-# What the shell set before any .env file was read. `load_dotenv(override=True)`
-# lets the file win over the shell -- except for the offline switch, which
-# run_local.sh decides from the endpoint check and must therefore stay on top.
+# What the shell set before any .env file was read. Deployment environments
+# must win over the local file, especially for the shared-mode safety gates.
 _SHELL = dict(os.environ)
 
 try:
@@ -33,7 +32,7 @@ except ImportError:                                   # pragma: no cover
         return False
 
 
-def load(path: Path | str | None = None, override: bool = True) -> bool:
+def load(path: Path | str | None = None, override: bool = False) -> bool:
     """Read a .env file into the environment. Missing file -> nothing happens."""
     target = Path(path) if path else HERE / ".env"
     if not target.is_file():
@@ -52,6 +51,14 @@ PIZZA_API_DEFAULT = "https://wse-research.org/pizza-api"
 
 def _truthy(value: str) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _integer(value: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(max(parsed, minimum), maximum)
 
 
 class Settings:
@@ -82,6 +89,20 @@ class Settings:
     def qanary_api_base(self) -> str:
         return self.get("QANARY_API_BASE").rstrip("/")
 
+    @property
+    def qanary_sparql_hosts(self) -> tuple[str, ...]:
+        """Extra hosts a Qanary response may name as its SPARQL endpoint."""
+        return tuple(
+            host.strip().lower()
+            for host in self.get("QANARY_SPARQL_HOSTS").split(",")
+            if host.strip()
+        )
+
+    @property
+    def allow_insecure_http(self) -> bool:
+        """Allow plain HTTP for non-loopback services (unsafe, opt-in only)."""
+        return _truthy(self.get("PIZZABOT_ALLOW_INSECURE_HTTP", "0"))
+
     # --- modes ------------------------------------------------------------
     @property
     def offline(self) -> bool:
@@ -95,6 +116,69 @@ class Settings:
     def llm_configured(self) -> bool:
         key = self.openai_api_key.strip()
         return bool(key) and not key.startswith("<") and bool(self.openai_api_base)
+
+    @property
+    def deployment(self) -> str:
+        value = self.get("PIZZABOT_DEPLOYMENT", "local").strip().lower()
+        return value if value in ("local", "shared") else "local"
+
+    @property
+    def shared_deployment(self) -> bool:
+        return self.deployment == "shared"
+
+    @property
+    def access_token(self) -> str:
+        return self.get("PIZZABOT_ACCESS_TOKEN")
+
+    def _feature(self, name: str) -> bool:
+        default = "0" if self.shared_deployment else "1"
+        value = self.get(name).strip()
+        return _truthy(value or default)
+
+    @property
+    def orders_enabled(self) -> bool:
+        return self._feature("PIZZABOT_ENABLE_ORDERS")
+
+    @property
+    def test_runs_enabled(self) -> bool:
+        return self._feature("PIZZABOT_ENABLE_TEST_RUNS")
+
+    @property
+    def llm_logging_enabled(self) -> bool:
+        return self._feature("PIZZABOT_ENABLE_LLM_LOG")
+
+    @property
+    def app_switching_enabled(self) -> bool:
+        return self._feature("PIZZABOT_ENABLE_APP_SWITCHING")
+
+    @property
+    def external_apps_enabled(self) -> bool:
+        return self._feature("PIZZABOT_ENABLE_EXTERNAL_APPS")
+
+    @property
+    def max_input_chars(self) -> int:
+        default = 2_000 if self.shared_deployment else 20_000
+        return _integer(self.get("PIZZABOT_MAX_INPUT_CHARS"), default, 100, 100_000)
+
+    @property
+    def max_turns(self) -> int:
+        default = 100 if self.shared_deployment else 1_000
+        return _integer(self.get("PIZZABOT_MAX_TURNS"), default, 1, 10_000)
+
+    @property
+    def max_llm_calls(self) -> int:
+        default = 100 if self.shared_deployment else 10_000
+        return _integer(self.get("PIZZABOT_MAX_LLM_CALLS"), default, 1, 100_000)
+
+    @property
+    def min_turn_interval_ms(self) -> int:
+        default = 500 if self.shared_deployment else 0
+        return _integer(
+            self.get("PIZZABOT_MIN_TURN_INTERVAL_MS"),
+            default,
+            0,
+            60_000,
+        )
 
     # --- which implementation --------------------------------------------
     @property

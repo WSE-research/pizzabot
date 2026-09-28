@@ -11,6 +11,8 @@ from langchain_core.messages import (
 )
 from enum import Enum
 
+from settings import settings
+
 # Define keys for the state dictionary
 MESSAGES = "messages"
 INPUT = "input"
@@ -31,9 +33,9 @@ class ChatbotState(TypedDict):
     current_intent: str
     invalid: bool
     ended: bool
-    pizza_id: str
-    customer_address: tuple[str]
-    order_id: str
+    pizza_id: str | None
+    customer_address: tuple[str, str, str] | None
+    order_id: str | None
 
 
 class Nodes(Enum):
@@ -61,7 +63,12 @@ class CheckerNode:
     This node checks whether user input is valid
     """
 
-    def __init__(self, order_keywords: list = ["order"], confirm_keywords: list = ["yes", "Yes"], description_keywords: list = ["tell me more", "describe"]):
+    def __init__(
+        self,
+        order_keywords: tuple[str, ...] = ("order",),
+        confirm_keywords: tuple[str, ...] = ("yes",),
+        description_keywords: tuple[str, ...] = ("tell me more", "describe"),
+    ):
         self.order_keywords = order_keywords
         self.confirm_keywords = confirm_keywords
         self.description_keywords = description_keywords
@@ -144,9 +151,10 @@ class CheckerNode:
         """
         Routes to the next node
         """
-        if state['active_order'] and ("current_intent" not in state or not state["current_intent"] == Intents.DESCRIPTION.value):
+        current_intent = state.get("current_intent", Intents.DEFAULT.value)
+        if state['active_order'] and current_intent != Intents.DESCRIPTION.value:
             return Nodes.RETRIEVAL.value
-        elif state["current_intent"] == Intents.DESCRIPTION.value:
+        elif current_intent == Intents.DESCRIPTION.value:
             return Nodes.DESCRIPTION.value
         else:
             return END
@@ -167,7 +175,7 @@ class DescriptionNode:
         _input = state[INPUT]  # user message
         # fetching the context from wikidata
         context = call_qanary_pipeline(_input)
-        logger.info(f"Context from Qanary: {context}")
+        logger.info("Qanary context available: %s", bool(context))
         description = generate_pizza_description(_input, str(
             context))  # generating the description with LLM
         state["messages"].append(AIMessage(content=description))
@@ -209,6 +217,16 @@ class OrderNode:
         next_slot = missing_slots[0]  # get next slot to fill
 
         if next_slot == OrderSlots.ORDER_ID.value:
+            if not settings.orders_enabled:
+                state['messages'].append(AIMessage(
+                    content="Thank you for providing all the details. Ordering "
+                            "is disabled in this deployment, so no order was "
+                            "placed."))
+                state['ended'] = True
+                return {
+                    MESSAGES: state[MESSAGES],
+                    "ended": state["ended"],
+                }
             order_id = post_order(
                 state["pizza_id"], state["customer_address"])  # post order
             if order_id is not None:
@@ -227,7 +245,8 @@ class OrderNode:
                 state['ended'] = True
                 return {
                     MESSAGES: state[MESSAGES],
-                    "invalid": state["invalid"]
+                    "invalid": state["invalid"],
+                    "ended": state["ended"],
                 }
 
         if next_slot == OrderSlots.PIZZA_NAME.value:
@@ -359,8 +378,9 @@ if __name__ == "__main__":
               if isinstance(m, AIMessage)][-1])  # print chatbot response
         user_input = input("-> Your response: ")
 
-        outputs = graph.invoke({INPUT: user_input, SLOTS: outputs[SLOTS], MESSAGES: outputs[MESSAGES], "active_order": outputs["active_order"], "confirm_order": outputs[
-                               "confirm_order"], "pizza_id": outputs["pizza_id"], "customer_address": outputs["customer_address"], "invalid": outputs["invalid"], "ended": outputs["ended"]})
+        next_state = dict(outputs)
+        next_state[INPUT] = user_input
+        outputs = graph.invoke(next_state)
 
         # check if the conversation has ended
         if outputs["ended"]:

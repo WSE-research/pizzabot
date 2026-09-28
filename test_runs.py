@@ -35,6 +35,7 @@ import difflib
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import time
 from datetime import datetime
@@ -92,15 +93,26 @@ def verdict(expected: str, actual: str) -> tuple[bool, float]:
 
 def _revision(root: Path) -> str:
     """The commit the implementation is at, when its folder is a git checkout."""
+    git = shutil.which("git")
+    if not git:
+        return ""
     try:
-        done = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-                              capture_output=True, text=True, timeout=5)
+        done = subprocess.run(  # noqa: S603
+            [git, "-C", str(root), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
     except (OSError, subprocess.SubprocessError):
         return ""
     if done.returncode != 0:
         return ""
-    dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
-                           capture_output=True, text=True, timeout=5).stdout.strip()
+    dirty = subprocess.run(  # noqa: S603
+        [git, "-C", str(root), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip()
     return done.stdout.strip() + ("+" if dirty else "")
 
 
@@ -124,6 +136,7 @@ def execute(app, on_turn=None, place_order: bool = False) -> dict:
     `place_order` is true; otherwise it is recorded as skipped.
     """
     turns = dialogue()
+    place_order = bool(place_order) and settings.orders_enabled
     sent = len(turns) if place_order else len(turns) - 1
     started_at = datetime.now().astimezone()
     started = time.perf_counter()
